@@ -1,0 +1,16 @@
+
+
+#Ignore vscode AI rules
+.github\instructions\codacy.instructions.md
+
+.env
+
+__pycache__
+
+node_modules
+
+.vscode
+
+.codacy
+
+venv/
