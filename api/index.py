@@ -6,7 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import io
 import tempfile
 import datetime
-import locale
+
 import requests
 import json
 from flask import Flask, request, send_file, jsonify
@@ -40,6 +40,16 @@ def month_to_roman(date_obj):
     month = date_obj.month
     roman_numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
     return roman_numerals[month - 1]
+
+def format_date_indo(date_obj):
+    months = [
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ]
+    day = date_obj.day
+    month = months[date_obj.month - 1]
+    year = date_obj.year
+    return f"{day} {month} {year}"
 
 def draw_wrapped_text(canvas_obj, text, x, y, max_width, font_name, font_size, line_height=None):
     """
@@ -573,9 +583,14 @@ def generate_activiness_letter():
         text2 = "Demikian surat keterangan keaktifan mahasiswa ini dibuat sebagaimana mestinya."
         body_y = draw_wrapped_text(c, text2, margin, body_y, width - 2*margin, "Times-Roman", 12)
 
-        # Footer & Tanda Tangan
+        if isinstance(period, str) and len(period) == 4 and period.isdigit():
+             # If period is just year, try to parse it or just use it? 
+             # Actually `period` is string like "2023/2024". Just verify context.
+             pass
+
         footer_y = body_y - 30
-        date_str = datetime.datetime.now().strftime("%d %B %Y")
+        date_obj = datetime.datetime.now()
+        date_str = format_date_indo(date_obj)
         c.drawRightString(width - margin, footer_y, f"Pekalongan, {date_str}")
         
         footer_y -= 20
@@ -721,8 +736,10 @@ def generate_activiness_letter():
         return jsonify({"error": str(e)}), 500
 
 def rupiah_format(angka, with_prefix=False, desimal=2):
-    locale.setlocale(locale.LC_NUMERIC, 'IND')
-    rupiah = locale.format("%.*f", (desimal, angka), True)
+    # Format number with comma as thousands separator and dot as decimal
+    s = "{:,.{}f}".format(angka, desimal)
+    # Swap separators: 1,234.56 -> 1.234,56
+    rupiah = s.replace(',', 'v').replace('.', ',').replace('v', '.')
     if with_prefix:
         return "Rp. {}".format(rupiah)
     return rupiah
