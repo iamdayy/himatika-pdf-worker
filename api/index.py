@@ -90,7 +90,7 @@ def home():
 # 0. EXCEL IMPORT
 # 0. EXCEL IMPORT
 from openpyxl import load_workbook
-from pyzbar.pyzbar import decode
+import zxingcpp
 from PIL import Image
 
 @app.route('/api/pdf/scan-qr', methods=['POST'])
@@ -130,7 +130,7 @@ def scan_qr():
             
             img_pil = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
 
-            # Detect attempts with pyzbar using Pillow Images
+            # Detect attempts with zxing-cpp using Pillow Images
             attempts = [img_pil]
             
             # 2. Grayscale
@@ -145,20 +145,17 @@ def scan_qr():
             img_binary = img_gray.point(lambda p: 255 if p > 128 else 0, mode='1')
             attempts.append(img_binary)
 
-            # 4. "Otsu" simulation (rough approximation or just another threshold)
-            # Pillow doesn't have built-in Otsu, so we'll skip complex adaptive thresholding
-            # and just try a different fixed threshold or skipping it to save space/deps.
-            # Let's add a darker threshold just in case
+            # 4. Darker Threshold
             img_binary_dark = img_gray.point(lambda p: 255 if p > 100 else 0, mode='1')
             attempts.append(img_binary_dark)
             
             for img_check in attempts:
                 try:
-                    decoded_objects = decode(img_check)
-                    if decoded_objects:
-                        for obj in decoded_objects:
-                            if obj.type == 'QRCODE':
-                                found_data = obj.data.decode('utf-8')
+                    results = zxingcpp.read_barcodes(img_check)
+                    if results:
+                        for result in results:
+                            if result.format == zxingcpp.BarcodeFormat.QRCode:
+                                found_data = result.text
                                 break
                     if found_data:
                         break
