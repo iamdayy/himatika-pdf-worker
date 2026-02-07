@@ -88,10 +88,10 @@ def home():
 # --- ENDPOINTS ---
 
 # 0. EXCEL IMPORT
+# 0. EXCEL IMPORT
 from openpyxl import load_workbook
-import cv2
-import numpy as np
 from pyzbar.pyzbar import decode
+from PIL import Image
 
 @app.route('/api/pdf/scan-qr', methods=['POST'])
 def scan_qr():
@@ -110,7 +110,6 @@ def scan_qr():
             temp_pdf_path = temp_pdf.name
 
         doc = fitz.open(temp_pdf_path)
-        print(doc)
         found_data = None
         
         for page_num in range(len(doc)):
@@ -121,44 +120,51 @@ def scan_qr():
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat)
             
-            # Convert to numpy array
-            if pix.n < 3:
-                img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-                if pix.n == 1:
-                    img_bgr = cv2.cvtColor(img_data, cv2.COLOR_GRAY2BGR)
-                else:
-                    img_bgr = cv2.cvtColor(img_data, cv2.COLOR_GRAY2BGR)
+            # Convert PyMuPDF Pixmap to PIL Image
+            if pix.n >= 4:
+                mode = "RGBA"
+            elif pix.n == 3:
+                mode = "RGB"
             else:
-                 img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-                 if pix.n == 3:
-                     img_bgr = cv2.cvtColor(img_data, cv2.COLOR_RGB2BGR)
-                 else:
-                     img_bgr = cv2.cvtColor(img_data, cv2.COLOR_RGBA2BGR)
+                mode = "L"
+            
+            img_pil = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
 
-            # Detect attempts with pyzbar
-            attempts = [img_bgr]
+            # Detect attempts with pyzbar using Pillow Images
+            attempts = [img_pil]
             
             # 2. Grayscale
-            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-            attempts.append(gray)
+            if mode != 'L':
+                img_gray = img_pil.convert('L')
+                attempts.append(img_gray)
+            else:
+                img_gray = img_pil
             
-            # 3. Thresholding (Binary)
-            _, thresh = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY)
-            attempts.append(thresh)
+            # 3. Binary Threshold (Simulation of cv2.threshold)
+            # Threshold = 128
+            img_binary = img_gray.point(lambda p: 255 if p > 128 else 0, mode='1')
+            attempts.append(img_binary)
 
-            # 4. Otsu Thresholding
-            _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            attempts.append(otsu)
+            # 4. "Otsu" simulation (rough approximation or just another threshold)
+            # Pillow doesn't have built-in Otsu, so we'll skip complex adaptive thresholding
+            # and just try a different fixed threshold or skipping it to save space/deps.
+            # Let's add a darker threshold just in case
+            img_binary_dark = img_gray.point(lambda p: 255 if p > 100 else 0, mode='1')
+            attempts.append(img_binary_dark)
             
             for img_check in attempts:
-                decoded_objects = decode(img_check)
-                if decoded_objects:
-                    for obj in decoded_objects:
-                        if obj.type == 'QRCODE':
-                            found_data = obj.data.decode('utf-8')
-                            break
-                if found_data:
-                    break
+                try:
+                    decoded_objects = decode(img_check)
+                    if decoded_objects:
+                        for obj in decoded_objects:
+                            if obj.type == 'QRCODE':
+                                found_data = obj.data.decode('utf-8')
+                                break
+                    if found_data:
+                        break
+                except Exception as e:
+                    # Continue if decoding fails for one variant
+                    continue
             
             if found_data:
                 break
