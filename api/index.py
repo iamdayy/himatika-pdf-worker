@@ -4,6 +4,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import io
+import tempfile
 import datetime
 import locale
 import requests
@@ -77,12 +78,207 @@ def home():
         "timestamp": datetime.datetime.now().isoformat(),
         "endpoints": {
             "excel_export": "/api/sheet/export",
+            "excel_import": "/api/sheet/import",
             "pdf_signature": "/api/sign/process",
+            "pdf_search_text": "/api/pdf/search-text",
             "activiness_letter": "/api/pdf/activiness-letter",
             "ticket_generator": "/api/pdf/ticket"
         }
     })
 # --- ENDPOINTS ---
+
+# 0. EXCEL IMPORT
+from openpyxl import load_workbook
+import cv2
+import numpy as np
+from pyzbar.pyzbar import decode
+
+@app.route('/api/pdf/scan-qr', methods=['POST'])
+def scan_qr():
+    try:
+        # Check if file is present
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+
+        # Save to temp
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
+            file.save(temp_pdf.name)
+            temp_pdf_path = temp_pdf.name
+
+        doc = fitz.open(temp_pdf_path)
+        print(doc)
+        found_data = None
+        
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            
+            # Improve resolution (3x zoom)
+            zoom = 3.0
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat)
+            
+            # Convert to numpy array
+            if pix.n < 3:
+                img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+                if pix.n == 1:
+                    img_bgr = cv2.cvtColor(img_data, cv2.COLOR_GRAY2BGR)
+                else:
+                    img_bgr = cv2.cvtColor(img_data, cv2.COLOR_GRAY2BGR)
+            else:
+                 img_data = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+                 if pix.n == 3:
+                     img_bgr = cv2.cvtColor(img_data, cv2.COLOR_RGB2BGR)
+                 else:
+                     img_bgr = cv2.cvtColor(img_data, cv2.COLOR_RGBA2BGR)
+
+            # Detect attempts with pyzbar
+            attempts = [img_bgr]
+            
+            # 2. Grayscale
+            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            attempts.append(gray)
+            
+            # 3. Thresholding (Binary)
+            _, thresh = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY)
+            attempts.append(thresh)
+
+            # 4. Otsu Thresholding
+            _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            attempts.append(otsu)
+            
+            for img_check in attempts:
+                decoded_objects = decode(img_check)
+                if decoded_objects:
+                    for obj in decoded_objects:
+                        if obj.type == 'QRCODE':
+                            found_data = obj.data.decode('utf-8')
+                            break
+                if found_data:
+                    break
+            
+            if found_data:
+                break
+                
+        doc.close()
+        os.remove(temp_pdf_path)
+
+        if found_data:
+             return jsonify({'status': 'found', 'data': found_data})
+        else:
+             return jsonify({'status': 'not_found'})
+
+    except Exception as e:
+        print(f"Error scanning QR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/sheet/import', methods=['POST'])
+def import_generic_sheet():
+    try:
+        if 'file' not in request.files:
+             return jsonify({"error": "No file part"}), 400
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+
+        wb = load_workbook(file)
+        ws = wb.active # Default to first sheet or active one
+        
+        data = []
+        headers = []
+        
+        # Read headers (Row 1)
+        for cell in ws[1]:
+            headers.append(cell.value)
+            
+        # Read data (Row 2 onwards)
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            row_data = {}
+            for i, cell_value in enumerate(row):
+                if i < len(headers):
+                    header = headers[i]
+                    if header is None: continue
+
+                    # Handle nested keys (e.g. "user.name")
+                    keys = str(header).split('.')
+                    current_ref = row_data
+                    
+                    for k_idx, key in enumerate(keys):
+                        if k_idx == len(keys) - 1:
+                            # Last key, assign value
+                            current_ref[key] = cell_value
+                        else:
+                            # Create nested dict if not exists
+                            if key not in current_ref:
+                                current_ref[key] = {}
+                            current_ref = current_ref[key]
+                            
+            data.append(row_data)
+            
+        return jsonify({
+            "success": True,
+            "data": data
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# 0.5 PDF TEXT SEARCH (For Auto Signature)
+@app.route('/api/pdf/search-text', methods=['POST'])
+def search_text_pdf():
+    try:
+        body = request.json
+        pdf_url = body.get('pdf')
+        search_text = body.get('text')
+        
+        if not pdf_url or not search_text:
+             return jsonify({"error": "Missing pdf url or search text"}), 400
+             
+        # Download PDF
+        response = requests.get(pdf_url)
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to fetch PDF"}), 400
+            
+        pdf_bytes = response.content
+        
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        matches = []
+        
+        for page_num, page in enumerate(doc):
+            # search for text
+            text_instances = page.search_for(search_text)
+            
+            for inst in text_instances:
+                # inst is Rect(x0, y0, x1, y1)
+                # Frontend expects: { page, x, y, width, height }
+                # NOTE: PyMuPDF coordinates are Top-Left (0,0). 
+                # PDF.js also uses Top-Left usually, but sometimes Bottom-Left depending on view.
+                # app/pages/signatures/[id].vue logic:
+                # const y = viewport.height - transform[5]; // Konversi Y dari bawah ke atas if using PDF.js raw
+                # But here we return coordinates. Let's return standard Top-Left X, Y.
+                
+                matches.append({
+                    "page": page_num + 1, # 1-based index for frontend consistency
+                    "x": inst.x0,
+                    "y": inst.y0, # Top
+                    "width": inst.width,
+                    "height": inst.height,
+                    "text": search_text
+                })
+                
+        doc.close()
+        
+        return jsonify(matches)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 # 1. GENERIC EXCEL EXPORT
 @app.route('/api/sheet/export', methods=['POST'])
