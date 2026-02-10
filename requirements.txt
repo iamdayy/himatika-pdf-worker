@@ -1,9 +1,9 @@
 Flask==3.0.0
 flask-cors==4.0.0
-pymongo==4.6.1
+pymongo>=4.6.3
 boto3==1.34.0
 openpyxl==3.1.2
-pypdf==4.0.1
+pypdf>=4.1.0
 reportlab==4.0.9
 qrcode[pil]==7.4.2
 requests==2.31.0
@@ -11,3 +11,4 @@ python-dotenv==1.0.0
 Pillow==10.2.0
 PyMuPDF==1.23.24
 zxing-cpp==2.2.0
+waitress

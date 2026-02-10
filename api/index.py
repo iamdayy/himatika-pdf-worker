@@ -860,7 +860,7 @@ def generate_ticket():
         draw_box(25, 60, role.upper(), primary_color)
         draw_box(135, 60, rupiah_format(amount, True), secondary_color)
 
-        c.restoreState()
+
 
         # --- CONTENT: RIGHT STUB ---
         c.saveState()
@@ -871,7 +871,7 @@ def generate_ticket():
         c.drawString(0, 40, "ADMIT ONE")
         
         c.setFont("Helvetica", 10)
-        c.drawString(0, 10, participant[:15] + "...")
+        c.drawString(0, 10, member_name[:15] + "...")
         
         # Small QR for stub
         qr = qrcode.QRCode(box_size=2, border=0)
@@ -890,14 +890,14 @@ def generate_ticket():
         c.save()
         buffer.seek(0)
         
-        # Upload
-        filename = f"tickets/{body.get('id', 'ticket')}.pdf"
-        public_url = upload_bytes_to_r2(buffer.getvalue(), "application/pdf", filename)
-        
-        return jsonify({
-            "success": True,
-            "url": public_url
-        })
+        # Return PDF directly
+        buffer.seek(0)
+        return send_file(
+            buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"{body.get('id', 'ticket')}.pdf"
+        )
 
     except Exception as e:
         import traceback
