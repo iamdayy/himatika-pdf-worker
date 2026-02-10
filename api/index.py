@@ -4,6 +4,8 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import io
+import base64
+
 import tempfile
 import datetime
 
@@ -850,53 +852,151 @@ def generate_ticket():
         # Bottom Boxes (Price/Type)
         def draw_box(x, y, text, bg_color):
             c.setFillColor(bg_color)
-            textWidth = c.stringWidth(text, "Helvetica-Bold", 10)
-            c.rect(x, y, textWidth + 20, 25, fill=1, stroke=0)
-            c.setFillColor(white)
+            c.rect(x, y, 100, 30, fill=1, stroke=0)
+            c.setFillColor(white if bg_color == primary_color else text_color)
             c.setFont("Helvetica-Bold", 10)
-            c.drawCentredString(x + (textWidth + 20)/2, y + 8, text)
-        
-        amount_str = rupiah_format(amount, True)
-        if amount == 0:
-            amount_str = "FREE"
-        
-        
-        draw_box(60, 40, amount_str, secondary_color) # Price or Amount
+            c.drawCentredString(x + 50, y + 10, text)
 
-        # --- CONTENT: STUB (RIGHT) ---
-        c.saveState()
-        # Rotate text for stub header
-        c.translate(stub_x + 30, height/2)
-        c.rotate(-90)
-        c.setFillColor(white)
-        c.setFont("Helvetica-Bold", 16)
-        c.drawCentredString(0, 0, "TICKET EVENT")
+        draw_box(25, 60, role.upper(), primary_color)
+        draw_box(135, 60, rupiah_format(amount, True), secondary_color)
+
         c.restoreState()
-        
-        # Small Date
-        c.setFillColor(white)
-        c.setFont("Helvetica", 9)
-        c.drawRightString(width - 15, height - 30, date_str)
-        c.drawRightString(width - 15, height - 42, "08:00 PM") # Placeholder Time
 
-        # Small QR
-        c.drawImage(qr_img, width - 60, 20, 45, 45)
-        c.setFont("Courier", 8)
-        c.drawRightString(width - 20, 25, "N.001")
+        # --- CONTENT: RIGHT STUB ---
+        c.saveState()
+        c.translate(stub_x + 10, height/2)
+        
+        c.setFillColor(text_color)
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(0, 40, "ADMIT ONE")
+        
+        c.setFont("Helvetica", 10)
+        c.drawString(0, 10, participant[:15] + "...")
+        
+        # Small QR for stub
+        qr = qrcode.QRCode(box_size=2, border=0)
+        qr.add_data(body.get('id', 'TICKET'))
+        qr.make(fit=True)
+        img_qr = qr.make_image(fill_color="black", back_color="white")
+        
+        qr_bytes = io.BytesIO()
+        img_qr.save(qr_bytes, format='PNG')
+        qr_bytes.seek(0)
+        
+        c.drawImage(ImageReader(qr_bytes), 0, -60, 50, 50)
+        
+        c.restoreState()
 
         c.save()
         buffer.seek(0)
+        
+        # Upload
+        filename = f"tickets/{body.get('id', 'ticket')}.pdf"
+        public_url = upload_bytes_to_r2(buffer.getvalue(), "application/pdf", filename)
+        
+        return jsonify({
+            "success": True,
+            "url": public_url
+        })
 
-        return send_file(
-            buffer,
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name=f"Tiket-{member_name}.pdf"
-        )
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+# 5. TOOLS
+@app.route('/api/tools/qr', methods=['POST'])
+def generate_qr_tool():
+    try:
+        body = request.json
+        text = body.get('text')
+        
+        if not text:
+            return jsonify({"error": "No text provided"}), 400
+
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(text)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        buffered = io.BytesIO()
+        img.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        
+        return jsonify({
+            "success": True,
+            "dataUrl": f"data:image/png;base64,{img_str}"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/tools/compress-image', methods=['POST'])
+def compress_image_tool():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['file']
+        quality = int(request.form.get('quality', 80))
+        max_width = request.form.get('maxWidth')
+        max_height = request.form.get('maxHeight')
+        
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+
+        # Open image using Pillow
+        img = Image.open(file.stream)
+        
+        # Convert to RGB if necessary (e.g. for JPEG saving)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+            
+        # Resize if needed
+        if max_width or max_height:
+            w, h = img.size
+            ratio = min(
+                int(max_width)/w if max_width else 1, 
+                int(max_height)/h if max_height else 1
+            )
+            # Only downscale
+            if ratio < 1:
+                new_size = (int(w*ratio), int(h*ratio))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+                
+        # Compress
+        output_buffer = io.BytesIO()
+        # Default to JPEG for compression efficiency unless original was transparency heavy, 
+        # but here we force JPEG/WebP as requested or just standard JPEG for simplicity 
+        # based on 'browser-image-compression' replacement context usually implying JPEG/WebP.
+        # Let's return JPEG for now as it's most common for 'compression'.
+        
+        img.save(output_buffer, format='JPEG', quality=quality, optimize=True)
+        output_buffer.seek(0)
+        
+        # Encode to base64 to return easily (or binary if preferred, but base64 is easier for standard JSON API)
+        # However, `customReadMultipartFormData` in Nuxt expects a buffer. 
+        # Sending base64 is safer for JSON response, or we can return raw bytes with correct mimetype.
+        # Let's return base64 and decode in Nuxt to Buffer.
+        
+        img_str = base64.b64encode(output_buffer.getvalue()).decode("utf-8")
+        
+        return jsonify({
+            "success": True,
+            "data": img_str,
+            "mime": "image/jpeg"
+        })
+
+    except Exception as e:
+        print(f"Error compressing image: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)
