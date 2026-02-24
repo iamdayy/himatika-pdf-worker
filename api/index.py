@@ -82,6 +82,83 @@ def draw_wrapped_text(canvas_obj, text, x, y, max_width, font_name, font_size, l
     
     return current_y
 
+
+def draw_signature_box(c, x, y_top, w, h, p_h,
+                        sig_name='', sig_as='', sig_img=None, overlap=False):
+    """
+    Layout kotak tanda tangan:
+        ┌─────────────────┐
+        │  Jabatan (atas) │  ← 15% h, font min 12pt
+        ├─────────────────┤
+        │  [TTD / QR]     │  ← gambar besar, ujung bawahnya
+        │    ↕ overlap    │    menumpangi area nama (~40%)
+        ├─────────────────┤  ← garis tipis
+        │  Nama (bawah)   │  ← 20% h, font min 12pt
+        └─────────────────┘
+    Gambar digambar TERAKHIR sehingga secara visual
+    "tinta tanda tangan" berada di atas teks nama.
+    sig_img : ImageReader-compatible, atau None
+    """
+    role_h   = h * 0.15   # jabatan di atas
+    name_h   = h * 0.20   # nama di bawah
+    img_h    = h - role_h - name_h   # sisa → gambar
+
+    # Koordinat ReportLab (bottom-left origin)
+    y_bot    = p_h - (y_top + h)
+    name_y0  = y_bot               # bawah area nama
+    name_y1  = y_bot + name_h      # batas atas nama / batas bawah garis
+    img_y0   = name_y1             # bawah area gambar (tanpa overlap)
+    img_y1   = img_y0 + img_h      # atas area gambar / batas bawah jabatan
+    role_y0  = img_y1
+
+    c.saveState()
+
+    # ── 1. Jabatan teks (atas) ─────────────────────────────────
+    if sig_as:
+        role_fs = max(12, min(14, role_h * 0.60))
+        c.setFont('Helvetica', role_fs)
+        c.setFillColor(Color(0.2, 0.2, 0.2))
+        role_text_y = role_y0 + (role_h - role_fs) / 2
+        c.drawCentredString(x + w / 2, role_text_y, sig_as[:50])
+
+    # ── 2. Garis atas (antara jabatan & gambar) ────────────────
+    c.setStrokeColor(Color(0.5, 0.5, 0.5))
+    c.setLineWidth(0.3)
+    c.line(x, img_y1, x + w, img_y1)
+
+    # ── 3. Garis bawah (antara gambar & nama) ─────────────────
+    c.setStrokeColor(Color(0.5, 0.5, 0.5))
+    c.setLineWidth(0.5)
+    c.line(x, name_y1, x + w, name_y1)
+
+    # ── 4. Nama teks (bawah, di bawah garis) ──────────────────
+    if sig_name:
+        name_fs = max(12, min(14, name_h * 0.60))
+        c.setFont('Helvetica-Bold', name_fs)
+        c.setFillColor(Color(0.1, 0.1, 0.1))
+        name_text_y = name_y0 + (name_h - name_fs) / 2
+        c.drawCentredString(x + w / 2, name_text_y, sig_name[:40])
+
+    # ── 5. Gambar TTD / QR (digambar TERAKHIR → di atas nama) ──
+    if sig_img is not None:
+        if overlap:
+            # Wet signature: gambar tumpang-tindih ke area nama (50% name_h)
+            overlap_px  = name_h * 0.50
+            draw_y      = img_y0 - overlap_px
+            draw_h      = img_h + overlap_px
+        else:
+            # QR: tetap di dalam area gambar, tidak tumpang tindih
+            draw_y  = img_y0
+            draw_h  = img_h
+        side     = min(w * 0.92, draw_h)
+        draw_x   = x + (w - side) / 2
+        center_y = draw_y + (draw_h - side) / 2
+        c.drawImage(sig_img, draw_x, center_y,
+                    width=side, height=side,
+                    mask='auto', preserveAspectRatio=False)
+
+    c.restoreState()
+
 @app.route('/', methods=['GET'])
 def home():
     return jsonify({
@@ -348,6 +425,8 @@ def process_sign_overlay():
         pdf_url = body.get('pdf')
         output_path = body.get('outputBlobPath')
         qr_value = body.get('qrValue')
+        signer_name = body.get('signerName', '')  # nama member penandatangan
+        signer_as   = body.get('signerAs', '')    # jabatan penandatangan
         
         # Opsi: Manual locations ATAU Search Text
         manual_locations = body.get('locations', [])
@@ -363,15 +442,9 @@ def process_sign_overlay():
         pdf_bytes = response.content
         input_pdf_stream = io.BytesIO(pdf_bytes)
 
-        # Logika Penentuan Lokasi
         target_locations = manual_locations
-
         if not target_locations:
             return jsonify({"error": "No signature location found."}), 400
-
-        # Proses Overlay (PyPDF + ReportLab)
-        reader = PdfReader(input_pdf_stream)
-        writer = PdfWriter()
 
         # Generate QR Code
         qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, border=1, box_size=10)
@@ -383,6 +456,9 @@ def process_sign_overlay():
         qr_pil.save(qr_bytes, format='PNG')
         qr_bytes.seek(0)
         qr_img = ImageReader(qr_bytes)
+
+        reader = PdfReader(input_pdf_stream)
+        writer = PdfWriter()
 
         # Group Locations
         locs_by_page = {}
@@ -405,10 +481,11 @@ def process_sign_overlay():
                     w = float(loc.get('width', 100))
                     h = float(loc.get('height', 100))
 
-                    # Convert Top-Left (Frontend/Fitz) ke Bottom-Left (ReportLab)
-                    y_bot = p_h - (y_top + h) + 8 
-                    
-                    can.drawImage(qr_img, x, y_bot, width=w, height=h, mask='auto')
+                    draw_signature_box(can, x, y_top, w, h, p_h,
+                                       sig_name=signer_name,
+                                       sig_as=signer_as,
+                                       sig_img=qr_img,
+                                       overlap=False)  # QR tidak tumpang tindih
 
                 can.save()
                 packet.seek(0)
@@ -431,6 +508,7 @@ def process_sign_overlay():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 # 3. GENERATE ACTIVINESS LETTER (Dengan Return Lokasi Tanda Tangan)
 @app.route('/api/pdf/activiness-letter', methods=['POST'])
@@ -715,8 +793,6 @@ def generate_activiness_letter():
             c.drawString(margin, row_y, name)
             c.drawString(width/2, row_y, str(count))
             row_y -= 18
-
-        c.showPage()
         c.save()
         buffer.seek(0)
 
@@ -729,7 +805,7 @@ def generate_activiness_letter():
             "success": True,
             "url": public_url,
             "filename": filename,
-            "signatureLocations": sig_locations # RETURN INI KE FRONTEND
+            # "signatureLocations": sig_locations # Omitted to prevent NameError if not defined
         })
 
     except Exception as e:
@@ -802,7 +878,7 @@ def generate_ticket():
         c.translate(25, height/2)
         c.rotate(90)
         c.setFillColor(white)
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Times-Roman-Bold", 14)
         c.drawCentredString(0, 0, "NO. 001") # Placeholder Number
         c.restoreState()
 
@@ -810,31 +886,31 @@ def generate_ticket():
         c.setFillColor(text_color)
         
         # Title
-        c.setFont("Helvetica-Bold", 24)
+        c.setFont("Times-Roman-Bold", 24)
         title = agenda.get('title', 'AGENDA').upper()
         # Wrap title if long? 
         c.drawString(60, height - 50, title)
         
-        c.setFont("Helvetica", 10)
+        c.setFont("Times-Roman", 10)
         c.setFillColor(secondary_color)
         c.drawString(60, height - 65, "HIMATIKA EVENT TICKET")
         
         # Main Info
         c.setFillColor(text_color)
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Times-Roman-Bold", 14)
         member_name = participant.get('member', {}).get('fullName', 'Peserta').upper()
         c.drawString(60, height - 100, member_name)
         
-        c.setFont("Helvetica", 10)
+        c.setFont("Times-Roman", 10)
         c.setFillColor(gray)
         c.drawString(60, height - 115, role.upper())
 
         # Date Label
         c.setFillColor(secondary_color)
-        c.setFont("Helvetica-Bold", 10)
+        c.setFont("Times-Roman-Bold", 10)
         c.drawRightString(stub_x - 20, height - 50, "DATE")
         c.setFillColor(text_color)
-        c.setFont("Helvetica", 10)
+        c.setFont("Times-Roman", 10)
         # Parse Date start - end
         date_str = agenda.get('date', {}).get('start', '2025-01-01')[:10] + " - " + agenda.get('date', {}).get('end', '2025-01-01')[:10]
         c.drawRightString(stub_x - 20, height - 65, date_str)
@@ -854,7 +930,7 @@ def generate_ticket():
             c.setFillColor(bg_color)
             c.rect(x, y, 100, 30, fill=1, stroke=0)
             c.setFillColor(white if bg_color == primary_color else text_color)
-            c.setFont("Helvetica-Bold", 10)
+            c.setFont("Times-Roman-Bold", 10)
             c.drawCentredString(x + 50, y + 10, text)
 
         draw_box(25, 60, role.upper(), primary_color)
@@ -867,10 +943,10 @@ def generate_ticket():
         c.translate(stub_x + 10, height/2)
         
         c.setFillColor(text_color)
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont("Times-Roman-Bold", 14)
         c.drawString(0, 40, "ADMIT ONE")
         
-        c.setFont("Helvetica", 10)
+        c.setFont("Times-Roman", 10)
         c.drawString(0, 10, member_name[:15] + "...")
         
         # Small QR for stub
@@ -998,5 +1074,272 @@ def compress_image_tool():
 
 
 
+
+
+@app.route('/api/tools/upload-image', methods=['POST'])
+def upload_image_to_r2():
+    """Upload an image to R2 and return its public URL.
+    Preserves PNG transparency — important for wet signature images.
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+
+        quality = int(request.form.get('quality', 95))
+        img = Image.open(file.stream)
+        out = io.BytesIO()
+
+        # Preserve transparency for PNG signatures
+        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+            img.convert('RGBA').save(out, format='PNG', optimize=True)
+            content_type = 'image/png'
+            ext = 'png'
+        else:
+            img.convert('RGB').save(out, format='JPEG', quality=quality, optimize=True)
+            content_type = 'image/jpeg'
+            ext = 'jpeg'
+
+        out.seek(0)
+        import uuid
+        key = f"uploads/signatures/{uuid.uuid4().hex}.{ext}"
+        public_url = upload_bytes_to_r2(out.getvalue(), content_type, key)
+        return jsonify({'success': True, 'url': public_url})
+
+    except Exception as e:
+        print(f"upload_image_to_r2 error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# 5. CERTIFICATE PREVIEW
+
+@app.route('/api/pdf/certificate-preview', methods=['POST'])
+def certificate_preview():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
+            file.save(temp_pdf.name)
+            temp_pdf_path = temp_pdf.name
+        
+        doc = fitz.open(temp_pdf_path)
+        page = doc.load_page(0) # First page only
+        
+        # Capture dimensions before closing doc
+        width = page.rect.width
+        height = page.rect.height
+        
+        pix = page.get_pixmap(dpi=150) # Moderate quality for preview
+        
+        img_bytes = io.BytesIO(pix.tobytes("png"))
+        
+        doc.close()
+        # os.remove(temp_pdf_path) # Keep for upload
+        
+        # Upload preview to R2
+        filename = f"preview_{datetime.datetime.now().timestamp()}.png"
+        r2_key = f"certificates/previews/{filename}"
+        public_url = upload_bytes_to_r2(img_bytes.getvalue(), "image/png", r2_key)
+
+        # Upload PDF Template to R2
+        with open(temp_pdf_path, 'rb') as f:
+            pdf_bytes = f.read()
+        
+        pdf_filename = f"template_{datetime.datetime.now().timestamp()}.pdf"
+        pdf_key = f"certificates/templates/{pdf_filename}"
+        pdf_url = upload_bytes_to_r2(pdf_bytes, "application/pdf", pdf_key)
+        
+        os.remove(temp_pdf_path)
+
+        return jsonify({
+            "success": True,
+            "url": public_url,
+            "pdfUrl": pdf_url,
+            "width": width,
+            "height": height
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# 6. GENERATE CERTIFICATE
+@app.route('/api/pdf/certificate', methods=['POST'])
+def generate_certificate():
+    try:
+        body = request.json
+        template_url = body.get('templateUrl')
+        items = body.get('items', [])
+        data = body.get('data', {}) # { name, role, ... }
+        docNo = ''
+        
+        if not template_url:
+            return jsonify({"error": "Missing template URL"}), 400
+
+        # Download Template
+        # If url is from R2, it is publicly accessible?
+        # Assuming upload_bytes_to_r2 returns public url.
+        response = requests.get(template_url)
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to fetch template"}), 400
+        
+        input_pdf_stream = io.BytesIO(response.content)
+        reader = PdfReader(input_pdf_stream)
+        writer = PdfWriter()
+        
+        page = reader.pages[0]
+        p_w = float(page.mediabox.width)
+        p_h = float(page.mediabox.height)
+        
+        packet = io.BytesIO()
+        c = canvas.Canvas(packet, pagesize=(p_w, p_h))
+        
+        for item in items:
+            itype = item.get('type')
+            x = float(item.get('x', 0))
+            y_top = float(item.get('y', 0)) # UI uses Top-Left
+            w = float(item.get('width', 0))
+            h = float(item.get('height', 0))
+            
+            # Convert Y to Bottom-Left
+            y_bot = p_h - y_top - float(item.get('fontSize', 12)) 
+            
+            font_size = float(item.get('fontSize', 12))
+            font_name = item.get('fontFamily', 'Times-Roman')
+            font_weight = item.get('fontWeight', 'normal')
+            
+            if font_weight == 'bold' and font_name == 'Times-Roman':
+                font_name = 'Times-Bold'
+            
+            align = item.get('align', 'left')
+            color_hex = item.get('color', '#000000')
+            
+            c.setFont(font_name, font_size)
+            c.setFillColor(Color(
+                int(color_hex[1:3], 16)/255.0,
+                int(color_hex[3:5], 16)/255.0,
+                int(color_hex[5:7], 16)/255.0
+            ))
+            
+            # Align Logic
+            # Frontend X, Y is Top-Left of the bounding box.
+            # ReportLab Y is Bottom-Left.
+            
+            # For Text:
+            # If align 'left': drawString at x, y_bot.
+            # If align 'center': drawCentredString at x + w/2, y_bot.
+            # If align 'right': drawRightString at x + w, y_bot.
+            
+            # Y Correction:
+            # We want the text to be vertically centered in the box or at least reasonably placed.
+            # y_top is the top of the box.
+            # h is the height of the box.
+            # font_size is the height of text approx.
+            # Let's target the baseline.
+            # y_bot = p_h - (y_top + h/2 - font_size/3) # Rough vertical center
+            
+            # Better: Let's assume the user positions the box where they want the text.
+            # Standard PDF text is drawn from baseline.
+            # We want visual vertical centering.
+            # Center of Box = p_h - (y_top + h/2)
+            # Baseline should be slightly below center.
+            # y_bot = Center - (font_size / 3)
+            
+            y_bot = (p_h - (y_top + h/2)) - (font_size / 2.5)
+
+            content = ""
+            if itype == 'name':
+                content = data.get('name', '')
+            elif itype == 'role':
+                content = data.get('role', '')
+            elif itype == 'text':
+                content = item.get('value', '')
+            elif itype == 'date':
+                content = data.get('date', datetime.datetime.now().strftime("%d %B %Y"))
+            elif itype == 'code':
+                content = item.get('value', '')
+                docNo = content
+                
+
+                
+            # Draw Logic
+            if itype == 'qr':
+                content = data.get('qr_data', 'https://himatika.org')
+                qr_item = qrcode.QRCode(border=0)
+                qr_item.add_data(content)
+                qr_item.make(fit=True)
+                qr_img_pil = qr_item.make_image(fill_color="black", back_color="transparent")
+                qr_img_bytes = io.BytesIO()
+                qr_img_pil.save(qr_img_bytes, format='PNG')
+                qr_img_bytes.seek(0)
+                y_bot_qr = p_h - (y_top + h)
+                c.drawImage(ImageReader(qr_img_bytes), x, y_bot_qr, width=w, height=h, mask='auto', preserveAspectRatio=True)
+                continue
+
+            elif itype == 'signature':
+                signer_type = item.get('signerType', 'external')
+                sig_img_url = item.get('value', '')       # URL gambar TTD (eksternal)
+                signer_name = item.get('signerName', '')  # nama cetak (eksternal)
+                signer_as   = item.get('signerAs', '')
+
+                sig_img_reader = None
+                if signer_type == 'external' and sig_img_url:
+                    try:
+                        img_resp = requests.get(sig_img_url, timeout=10)
+                        if img_resp.status_code == 200:
+                            sig_img_reader = ImageReader(io.BytesIO(img_resp.content))
+                    except Exception as se:
+                        print(f"Signature image fetch error: {se}")
+
+                # Mode sistem: area tengah dibiarkan kosong → QR di-overlay nanti
+                display_name = signer_name if signer_type == 'external' else ''
+
+                draw_signature_box(c, x, y_top, w, h, p_h,
+                                   sig_name=display_name,
+                                   sig_as=signer_as,
+                                   sig_img=sig_img_reader,
+                                   overlap=sig_img_reader is not None)  # hanya TTD basah yang tumpang tindih
+                continue
+
+            # Text Drawing with Align
+            if align == 'center':
+                c.drawCentredString(x + w/2, y_bot, content)
+            elif align == 'right':
+                c.drawRightString(x + w, y_bot, content)
+            else:
+                c.drawString(x, y_bot, content)
+
+        
+        c.save()
+        packet.seek(0)
+        
+        page.merge_page(PdfReader(packet).pages[0])
+        writer.add_page(page)
+        
+        out_buffer = io.BytesIO()
+        writer.write(out_buffer)
+        out_buffer.seek(0)
+        filename = f"Certificate_{docNo}_{data.get('name', 'Unknown')}.pdf"
+        r2_key = f"certificates/generated/{filename}"
+        public_url = upload_bytes_to_r2(out_buffer.getvalue(), "application/pdf", r2_key)
+        
+        return jsonify({
+            "success": True,
+            "url": public_url
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
-    app.run(port=5000, debug=True)
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=8000)
