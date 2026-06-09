@@ -805,7 +805,7 @@ def generate_activiness_letter():
             "success": True,
             "url": public_url,
             "filename": filename,
-            # "signatureLocations": sig_locations # Omitted to prevent NameError if not defined
+            "signatureLocations": sig_locations
         })
 
     except Exception as e:
