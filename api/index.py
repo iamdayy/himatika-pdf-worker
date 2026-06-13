@@ -880,7 +880,7 @@ def generate_ticket():
         c.translate(25, height/2)
         c.rotate(90)
         c.setFillColor(white)
-        c.setFont("Times-Bold", 14)
+        c.setFont("Helvetica-Bold", 14)
         c.drawCentredString(0, 0, "NO. " + str(participant.get('_id', '000000'))[-6:].upper())
         c.restoreState()
 
@@ -888,25 +888,25 @@ def generate_ticket():
         c.setFillColor(text_color)
         
         # Title
-        c.setFont("Times-Bold", 24)
+        c.setFont("Helvetica-Bold", 22)
         title = agenda.get('title', 'AGENDA').upper()
         # Wrap title if long? 
-        c.drawString(60, height - 50, title)
+        c.drawString(60, height - 55, title)
         
-        c.setFont("Times-Roman", 10)
+        c.setFont("Helvetica", 10)
         c.setFillColor(secondary_color)
-        c.drawString(60, height - 65, "HIMATIKA EVENT TICKET")
+        c.drawString(60, height - 70, "HIMATIKA EVENT TICKET")
         
         # Main Info
         c.setFillColor(text_color)
-        c.setFont("Times-Bold", 14)
+        c.setFont("Helvetica-Bold", 14)
         member_dict = participant.get('member') or participant.get('guest') or {}
         member_name = member_dict.get('fullName', 'Peserta').upper()
-        c.drawString(60, height - 100, member_name)
+        c.drawString(60, height - 110, member_name)
         
-        c.setFont("Times-Roman", 10)
+        c.setFont("Helvetica", 10)
         c.setFillColor(gray)
-        c.drawString(60, height - 115, role.upper())
+        c.drawString(60, height - 125, role.upper())
 
         # Logos
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -914,56 +914,55 @@ def generate_ticket():
         logo_hima_path = os.path.join(base_dir, 'assets', 'img', 'logo.png')
         
         logo_size = 35
-        logo_y = height - 40 - logo_size
+        logo_y = height - 45 - logo_size
+        
+        # Align logos to the right, closer to stub line
+        itsnu_x = stub_x - 30 - (logo_size * 2) - 10
+        hima_x = stub_x - 30 - logo_size
+        
         if os.path.exists(logo_itsnu_path):
-            c.drawImage(ImageReader(logo_itsnu_path), stub_x - 100, logo_y, width=logo_size, height=logo_size, mask='auto', preserveAspectRatio=True)
+            c.drawImage(ImageReader(logo_itsnu_path), itsnu_x, logo_y, width=logo_size, height=logo_size, mask='auto', preserveAspectRatio=True)
         if os.path.exists(logo_hima_path):
-            c.drawImage(ImageReader(logo_hima_path), stub_x - 55, logo_y, width=logo_size, height=logo_size, mask='auto', preserveAspectRatio=True)
+            c.drawImage(ImageReader(logo_hima_path), hima_x, logo_y, width=logo_size, height=logo_size, mask='auto', preserveAspectRatio=True)
 
         # Date Label
         c.setFillColor(secondary_color)
-        c.setFont("Times-Bold", 10)
-        c.drawRightString(stub_x - 20, height - 85, "DATE")
+        c.setFont("Helvetica-Bold", 10)
+        c.drawRightString(stub_x - 30, height - 105, "DATE")
         c.setFillColor(text_color)
-        c.setFont("Times-Roman", 10)
+        c.setFont("Helvetica", 10)
         date_info = agenda.get('date') or {}
         date_start = date_info.get('start') or '2025-01-01'
         date_end = date_info.get('end') or '2025-01-01'
-        date_str = date_start[:10] + " - " + date_end[:10]
-        c.drawRightString(stub_x - 20, height - 100, date_str)
-
-        # QR Code (Middle)
-        qr_payload = {"id": participant.get('_id'), "role": role}
-        qr = qrcode.make(json.dumps(qr_payload))
-        qr_mem = io.BytesIO()
-        qr.save(qr_mem, format='PNG')
-        qr_mem.seek(0)
-        qr_img = ImageReader(qr_mem)
         
-        c.drawImage(qr_img, 300, 70, 90, 90)
+        # Clean up date string if it has T
+        d_start = date_start.split('T')[0]
+        d_end = date_end.split('T')[0]
+        date_str = d_start if d_start == d_end else f"{d_start} to {d_end}"
+        c.drawRightString(stub_x - 30, height - 120, date_str)
 
         # Bottom Boxes (Price/Type)
-        def draw_box(x, y, text, bg_color):
+        def draw_box(x, y, text, bg_color, box_width=110):
             c.setFillColor(bg_color)
-            c.rect(x, y, 100, 30, fill=1, stroke=0)
+            c.rect(x, y, box_width, 30, fill=1, stroke=0)
             c.setFillColor(white if bg_color == primary_color else text_color)
-            c.setFont("Times-Bold", 10)
-            c.drawCentredString(x + 50, y + 10, text)
+            c.setFont("Helvetica-Bold", 10)
+            c.drawCentredString(x + (box_width/2), y + 10, text)
 
-        draw_box(25, 60, role.upper(), primary_color)
-        draw_box(135, 60, rupiah_format(amount, True), secondary_color)
+        draw_box(60, 40, role.upper(), primary_color, box_width=110)
+        draw_box(180, 40, rupiah_format(amount, True), secondary_color, box_width=110)
 
         # Sponsors (Bottom right before QR)
         sponsors = agenda.get('configuration', {}).get('sponsors', [])
         pdf_sponsors = [s for s in sponsors if s.get('showOnPdf')]
         pdf_sponsors = pdf_sponsors[:3]
         if pdf_sponsors:
-            c.setFont("Times-Bold", 8)
+            c.setFont("Helvetica-Bold", 8)
             c.setFillColor(gray)
-            c.drawString(250, 50, "SUPPORTED BY:")
+            c.drawString(60, 25, "SUPPORTED BY:")
             
-            sp_x = 250
-            sp_y = 25
+            sp_x = 135
+            sp_y = 15
             sp_size = 20
             for sp in pdf_sponsors:
                 logo_url = sp.get('logo')
@@ -979,18 +978,26 @@ def generate_ticket():
                     except Exception as e:
                         print(f"Failed to load sponsor logo: {e}")
 
-
+        # QR Code (Middle right)
+        qr_payload = {"id": participant.get('_id'), "role": role}
+        qr = qrcode.make(json.dumps(qr_payload))
+        qr_mem = io.BytesIO()
+        qr.save(qr_mem, format='PNG')
+        qr_mem.seek(0)
+        qr_img = ImageReader(qr_mem)
+        
+        c.drawImage(qr_img, stub_x - 120, 25, 90, 90)
 
         # --- CONTENT: RIGHT STUB ---
         c.saveState()
         c.translate(stub_x + 10, height/2)
         
         c.setFillColor(text_color)
-        c.setFont("Times-Bold", 14)
-        c.drawString(0, 40, "ADMIT ONE")
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(10, 40, "ADMIT ONE")
         
-        c.setFont("Times-Roman", 10)
-        c.drawString(0, 10, member_name[:15] + "...")
+        c.setFont("Helvetica", 10)
+        c.drawString(10, 10, (member_name[:15] + "...") if len(member_name) > 15 else member_name)
         
         # Small QR for stub
         qr = qrcode.QRCode(box_size=2, border=0)
@@ -1002,7 +1009,7 @@ def generate_ticket():
         img_qr.save(qr_bytes, format='PNG')
         qr_bytes.seek(0)
         
-        c.drawImage(ImageReader(qr_bytes), 0, -60, 50, 50)
+        c.drawImage(ImageReader(qr_bytes), 10, -60, 50, 50)
         
         c.restoreState()
 
