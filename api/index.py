@@ -481,11 +481,13 @@ def process_sign_overlay():
                     w = float(loc.get('width', 100))
                     h = float(loc.get('height', 100))
 
-                    draw_signature_box(can, x, y_top, w, h, p_h,
-                                       sig_name=signer_name,
-                                       sig_as=signer_as,
-                                       sig_img=qr_img,
-                                       overlap=False)  # QR tidak tumpang tindih
+                    # Hanya gambar QR, abaikan teks dan garis
+                    y_bot_qr = p_h - (y_top + h)
+                    # Use a centered square for the QR code to ensure it's not distorted and centered
+                    side = min(w, h)
+                    draw_x = x + (w - side) / 2
+                    draw_y = y_bot_qr + (h - side) / 2
+                    can.drawImage(qr_img, draw_x, draw_y, width=side, height=side, mask='auto', preserveAspectRatio=True)
 
                 can.save()
                 packet.seek(0)
@@ -721,7 +723,7 @@ def generate_activiness_letter():
         note_y = 40
         c.setFont("Times-Italic", 7)
         c.drawString(margin, note_y, f"*Surat ini dibuat dengan menggunakan sistem Informasi Himpunan Mahasiswa Informatika (HIMATIKA) ITSNU Pekalongan")
-        c.drawString(margin, note_y - 8, f"*Untuk verifikasi keaslian surat ini, silakan kunjungi: {os.getenv('public_url')}/verify/scan")
+        c.drawString(margin, note_y - 8, f"*Untuk verifikasi keaslian surat ini, silakan kunjungi: {os.getenv('PUBLIC_URL')}/verify/scan")
         c.drawString(margin, note_y - 16, f"dan ditandatangani secara elektronik. Surat ini sah dan berlaku sebagai bukti keaktifan mahasiswa dalam organisasi.")
 
         # --- SIGNATURE CALCULATIONS ---
@@ -753,46 +755,245 @@ def generate_activiness_letter():
         
         c.showPage()
 
-        # --- PAGE 2: LAMPIRAN (Table) ---
-        header_bottom = draw_header(c, height - 100)
-        
-        curr_y = header_bottom - 20
-        c.setFont("Times-Italic", 12)
-        c.drawString(margin, curr_y, "Lampiran")
-        
-        curr_y -= 25
-        c.setFont("Times-Roman", 12)
-        c.drawString(margin, curr_y, "Daftar keaktifan mahasiswa :")
-        
-        # Table Header
-        curr_y -= 20
-        table_y = curr_y
-        c.setFont("Times-Bold", 12)
-        c.drawString(margin, table_y, "Kategori")
-        c.drawString(width/2, table_y, "Jumlah")
-        
-        c.setLineWidth(1)
-        c.line(margin, table_y - 4, width - margin, table_y - 4)
-        c.line(margin, table_y + 12, width - margin, table_y + 12) # Upper Line
-
-        # Table Rows
+        # --- PAGE 2+: LAMPIRAN (Summary Cards + Detail Tables) ---
+        activities_details = body.get('activitiesDetails', {})
         activities = point_data.get('activities', {})
-        agendas = activities.get('agendas', {})
-        
-        rows = [
-            ("Panitia Agenda", agendas.get('committees', 0)),
-            ("Peserta Agenda", agendas.get('participants', 0)),
-            ("Proyek", activities.get('projects', 0)),
-            ("Aspirasi", activities.get('aspirations', 0))
+        agendas_count = activities.get('agendas', {})
+
+        # Hitung total poin dari data detail yang sebenarnya
+        def sum_points(items):
+            return sum(item.get('point', 0) for item in items) if items else 0
+
+        computed_total = (
+            sum_points(activities_details.get('committees', []))
+            + sum_points(activities_details.get('participants', []))
+            + sum_points(activities_details.get('projects', []))
+            + sum_points(activities_details.get('aspirations', []))
+        )
+        # Gunakan total dari data detail jika ada, fallback ke point_data
+        total_point = computed_total if computed_total > 0 else point_data.get('point', 0)
+
+        # Helper: format date from ISO string
+        def fmt_date(d):
+            if not d:
+                return "-"
+            try:
+                if isinstance(d, str):
+                    dt = datetime.datetime.fromisoformat(d.replace('Z', '+00:00'))
+                else:
+                    dt = d
+                return dt.strftime("%d %b %Y")
+            except Exception:
+                return str(d)[:10] if d else "-"
+
+        # Batas bawah halaman (untuk page break otomatis)
+        page_bottom = 60
+
+        def start_new_page():
+            """Buat halaman baru dengan header."""
+            c.showPage()
+            return draw_header(c, height - 100)
+
+        header_bottom = draw_header(c, height - 100)
+        curr_y = header_bottom - 10
+
+        # ── Judul Lampiran ──
+        c.setFont("Times-Bold", 14)
+        c.drawCentredString(width / 2, curr_y, "LAMPIRAN")
+        curr_y -= 16
+        c.setFont("Times-Roman", 11)
+        subtitle = f"Rincian Keaktifan Mahasiswa Semester {point_data.get('semester', '-')}"
+        c.drawCentredString(width / 2, curr_y, subtitle)
+        curr_y -= 10
+        c.setLineWidth(0.5)
+        c.line(margin, curr_y, width - margin, curr_y)
+        curr_y -= 20
+
+        # ── SUMMARY CARDS ──
+        card_data = [
+            ("Kepanitiaan", len(activities_details.get('committees', []))),
+            ("Kepesertaan", len(activities_details.get('participants', []))),
+            ("Proyek", len(activities_details.get('projects', []))),
+            ("Aspirasi", len(activities_details.get('aspirations', []))),
         ]
-        
-        row_y = table_y - 20
-        c.setFont("Times-Roman", 12)
-        
-        for name, count in rows:
-            c.drawString(margin, row_y, name)
-            c.drawString(width/2, row_y, str(count))
-            row_y -= 18
+        num_cards = len(card_data)
+        usable_w = width - 2 * margin
+        card_gap = 8
+        card_w = (usable_w - (num_cards - 1) * card_gap) / num_cards
+        card_h = 50
+        card_y_top = curr_y  # top of the cards (ReportLab bottom-left)
+
+        for idx, (label, count) in enumerate(card_data):
+            cx = margin + idx * (card_w + card_gap)
+            cy = card_y_top - card_h  # bottom of card
+
+            # Card background
+            c.saveState()
+            c.setFillColor(Color(0.95, 0.95, 0.97))
+            c.setStrokeColor(Color(0.80, 0.80, 0.85))
+            c.setLineWidth(0.5)
+            c.roundRect(cx, cy, card_w, card_h, 4, fill=1, stroke=1)
+
+            # Count number (big, centered)
+            c.setFillColor(Color(0.15, 0.15, 0.15))
+            c.setFont("Helvetica-Bold", 18)
+            c.drawCentredString(cx + card_w / 2, cy + card_h - 22, str(count))
+
+            # Label (small, centered, below number)
+            c.setFillColor(Color(0.4, 0.4, 0.4))
+            c.setFont("Helvetica", 8)
+            c.drawCentredString(cx + card_w / 2, cy + 8, label)
+            c.restoreState()
+
+        curr_y = card_y_top - card_h - 12
+
+        # Total Point Badge (centered below cards)
+        tp_text = f"Total Poin: {total_point}"
+        tp_w = stringWidth(tp_text, "Helvetica-Bold", 11) + 24
+        tp_h = 22
+        tp_x = (width - tp_w) / 2
+        tp_y = curr_y - tp_h
+
+        c.saveState()
+        c.setFillColor(Color(0.20, 0.30, 0.55))
+        c.roundRect(tp_x, tp_y, tp_w, tp_h, 4, fill=1, stroke=0)
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawCentredString(width / 2, tp_y + 6, tp_text)
+        c.restoreState()
+
+        curr_y = tp_y - 25
+
+        # ── DETAIL TABLES ──
+        # Column layout: No | Nama Kegiatan | Tanggal | Poin
+        col_no_x = margin
+        col_name_x = margin + 30
+        col_date_x = width - margin - 130
+        col_point_x = width - margin - 40
+        table_right = width - margin
+        row_h = 16
+
+        def draw_table_header(y):
+            """Draw the table column headers and top/bottom lines."""
+            c.setFont("Times-Bold", 10)
+            c.setFillColor(Color(0.15, 0.15, 0.15))
+            # Top line
+            c.setLineWidth(0.8)
+            c.line(margin, y + 12, table_right, y + 12)
+            c.drawString(col_no_x, y, "No")
+            c.drawString(col_name_x, y, "Nama Kegiatan")
+            c.drawString(col_date_x, y, "Tanggal")
+            c.drawRightString(table_right, y, "Poin")
+            # Bottom line
+            c.setLineWidth(0.5)
+            c.line(margin, y - 4, table_right, y - 4)
+            return y - row_h
+
+        def draw_table_row(y, no, name, date_str, point_val):
+            """Draw a single row. Returns new y."""
+            c.setFont("Times-Roman", 9)
+            c.setFillColor(Color(0.1, 0.1, 0.1))
+            c.drawString(col_no_x, y, str(no))
+            # Truncate name if too long
+            max_name_w = col_date_x - col_name_x - 10
+            display_name = name
+            while stringWidth(display_name, "Times-Roman", 9) > max_name_w and len(display_name) > 5:
+                display_name = display_name[:-4] + "..."
+            c.drawString(col_name_x, y, display_name)
+            c.drawString(col_date_x, y, date_str)
+            c.drawRightString(table_right, y, str(point_val))
+            return y - row_h
+
+        def draw_section(title, items, curr_y):
+            """Draw a section title + table for a category. Handles page breaks."""
+            if not items:
+                return curr_y
+
+            # Check if we have enough space for at least the title + header + 1 row
+            needed = 50
+            if curr_y - needed < page_bottom:
+                hb = start_new_page()
+                curr_y = hb - 20
+
+            # Section title
+            c.setFont("Times-Bold", 11)
+            c.setFillColor(Color(0.2, 0.2, 0.2))
+            c.drawString(margin, curr_y, title)
+            curr_y -= 18
+
+            # Table header
+            curr_y = draw_table_header(curr_y)
+
+            subtotal = 0
+            for i, item in enumerate(items):
+                # Check page break
+                if curr_y - row_h < page_bottom:
+                    # Draw a "lanjutan" note
+                    c.setFont("Times-Italic", 8)
+                    c.setFillColor(Color(0.5, 0.5, 0.5))
+                    c.drawRightString(table_right, curr_y, "(lanjutan di halaman berikutnya)")
+                    hb = start_new_page()
+                    curr_y = hb - 20
+                    # Re-draw section title + header
+                    c.setFont("Times-Bold", 11)
+                    c.setFillColor(Color(0.2, 0.2, 0.2))
+                    c.drawString(margin, curr_y, f"{title} (lanjutan)")
+                    curr_y -= 18
+                    curr_y = draw_table_header(curr_y)
+
+                pt = item.get('point', 0)
+                subtotal += pt
+                job_info = item.get('job', '')
+                name_display = item.get('title', '-')
+                if job_info and job_info != '-':
+                    name_display = f"{name_display} ({job_info})"
+
+                curr_y = draw_table_row(
+                    curr_y,
+                    i + 1,
+                    name_display,
+                    fmt_date(item.get('date')),
+                    pt
+                )
+
+            # Subtotal line
+            c.setLineWidth(0.3)
+            c.line(margin, curr_y + row_h - 4, table_right, curr_y + row_h - 4)
+            c.setFont("Times-Bold", 9)
+            c.setFillColor(Color(0.1, 0.1, 0.1))
+            c.drawString(col_date_x, curr_y, "Subtotal")
+            c.drawRightString(table_right, curr_y, str(subtotal))
+            curr_y -= row_h + 8
+
+            return curr_y
+
+        # Draw each section
+        sections = [
+            ("A. Kepanitiaan Agenda", activities_details.get('committees', [])),
+            ("B. Kepesertaan Agenda", activities_details.get('participants', [])),
+            ("C. Proyek", activities_details.get('projects', [])),
+            ("D. Aspirasi", activities_details.get('aspirations', [])),
+        ]
+
+        for sec_title, sec_items in sections:
+            curr_y = draw_section(sec_title, sec_items, curr_y)
+
+        # ── Grand Total ──
+        if curr_y - 30 < page_bottom:
+            hb = start_new_page()
+            curr_y = hb - 20
+
+        c.setLineWidth(1)
+        c.line(margin, curr_y, table_right, curr_y)
+        curr_y -= 16
+        c.setFont("Times-Bold", 12)
+        c.setFillColor(Color(0.1, 0.1, 0.1))
+        c.drawString(margin, curr_y, "TOTAL POIN KEAKTIFAN")
+        c.drawRightString(table_right, curr_y, str(total_point))
+        curr_y -= 6
+        c.setLineWidth(1.5)
+        c.line(margin, curr_y, table_right, curr_y)
+
         c.save()
         buffer.seek(0)
 
