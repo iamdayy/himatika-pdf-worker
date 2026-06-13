@@ -881,7 +881,7 @@ def generate_ticket():
         c.rotate(90)
         c.setFillColor(white)
         c.setFont("Times-Bold", 14)
-        c.drawCentredString(0, 0, "NO. 001") # Placeholder Number
+        c.drawCentredString(0, 0, "NO. " + str(participant.get('_id', '000000'))[-6:].upper())
         c.restoreState()
 
         # --- CONTENT: MAIN AREA ---
@@ -908,17 +908,29 @@ def generate_ticket():
         c.setFillColor(gray)
         c.drawString(60, height - 115, role.upper())
 
+        # Logos
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        logo_itsnu_path = os.path.join(base_dir, 'assets', 'img', 'itsnu-logo.png')
+        logo_hima_path = os.path.join(base_dir, 'assets', 'img', 'logo.png')
+        
+        logo_size = 35
+        logo_y = height - 40 - logo_size
+        if os.path.exists(logo_itsnu_path):
+            c.drawImage(ImageReader(logo_itsnu_path), stub_x - 100, logo_y, width=logo_size, height=logo_size, mask='auto', preserveAspectRatio=True)
+        if os.path.exists(logo_hima_path):
+            c.drawImage(ImageReader(logo_hima_path), stub_x - 55, logo_y, width=logo_size, height=logo_size, mask='auto', preserveAspectRatio=True)
+
         # Date Label
         c.setFillColor(secondary_color)
         c.setFont("Times-Bold", 10)
-        c.drawRightString(stub_x - 20, height - 50, "DATE")
+        c.drawRightString(stub_x - 20, height - 85, "DATE")
         c.setFillColor(text_color)
         c.setFont("Times-Roman", 10)
         date_info = agenda.get('date') or {}
         date_start = date_info.get('start') or '2025-01-01'
         date_end = date_info.get('end') or '2025-01-01'
         date_str = date_start[:10] + " - " + date_end[:10]
-        c.drawRightString(stub_x - 20, height - 65, date_str)
+        c.drawRightString(stub_x - 20, height - 100, date_str)
 
         # QR Code (Middle)
         qr_payload = {"id": participant.get('_id'), "role": role}
@@ -941,6 +953,32 @@ def generate_ticket():
         draw_box(25, 60, role.upper(), primary_color)
         draw_box(135, 60, rupiah_format(amount, True), secondary_color)
 
+        # Sponsors (Bottom right before QR)
+        sponsors = agenda.get('configuration', {}).get('sponsors', [])
+        pdf_sponsors = [s for s in sponsors if s.get('showOnPdf')]
+        pdf_sponsors = pdf_sponsors[:3]
+        if pdf_sponsors:
+            c.setFont("Times-Bold", 8)
+            c.setFillColor(gray)
+            c.drawString(250, 50, "SUPPORTED BY:")
+            
+            sp_x = 250
+            sp_y = 25
+            sp_size = 20
+            for sp in pdf_sponsors:
+                logo_url = sp.get('logo')
+                if logo_url:
+                    try:
+                        import urllib.request
+                        req = urllib.request.Request(logo_url, headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req, timeout=5) as response:
+                            img_data = response.read()
+                            img_mem = io.BytesIO(img_data)
+                            c.drawImage(ImageReader(img_mem), sp_x, sp_y, width=sp_size, height=sp_size, mask='auto', preserveAspectRatio=True)
+                            sp_x += sp_size + 10
+                    except Exception as e:
+                        print(f"Failed to load sponsor logo: {e}")
+
 
 
         # --- CONTENT: RIGHT STUB ---
@@ -956,7 +994,7 @@ def generate_ticket():
         
         # Small QR for stub
         qr = qrcode.QRCode(box_size=2, border=0)
-        qr.add_data(body.get('id', 'TICKET'))
+        qr.add_data(json.dumps({"id": participant.get('_id'), "role": role}))
         qr.make(fit=True)
         img_qr = qr.make_image(fill_color="black", back_color="white")
         
