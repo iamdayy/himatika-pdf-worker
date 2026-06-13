@@ -829,7 +829,9 @@ def generate_ticket():
         body = request.json
         agenda = body.get('agenda')
         amount = body.get('amount')
-        participant = body.get('participant')
+        if amount is None:
+            amount = 0
+        participant = body.get('participant') or {}
         role = body.get('role', 'participant')
 
         # Ukuran Ticket (Landscape)
@@ -898,7 +900,8 @@ def generate_ticket():
         # Main Info
         c.setFillColor(text_color)
         c.setFont("Times-Roman-Bold", 14)
-        member_name = participant.get('member', {}).get('fullName', 'Peserta').upper()
+        member_dict = participant.get('member') or participant.get('guest') or {}
+        member_name = member_dict.get('fullName', 'Peserta').upper()
         c.drawString(60, height - 100, member_name)
         
         c.setFont("Times-Roman", 10)
@@ -911,8 +914,10 @@ def generate_ticket():
         c.drawRightString(stub_x - 20, height - 50, "DATE")
         c.setFillColor(text_color)
         c.setFont("Times-Roman", 10)
-        # Parse Date start - end
-        date_str = agenda.get('date', {}).get('start', '2025-01-01')[:10] + " - " + agenda.get('date', {}).get('end', '2025-01-01')[:10]
+        date_info = agenda.get('date') or {}
+        date_start = date_info.get('start') or '2025-01-01'
+        date_end = date_info.get('end') or '2025-01-01'
+        date_str = date_start[:10] + " - " + date_end[:10]
         c.drawRightString(stub_x - 20, height - 65, date_str)
 
         # QR Code (Middle)
