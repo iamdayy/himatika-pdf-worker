@@ -880,7 +880,7 @@ def generate_ticket():
         c.translate(25, height/2)
         c.rotate(90)
         c.setFillColor(white)
-        c.setFont("Times-Roman-Bold", 14)
+        c.setFont("Times-Bold", 14)
         c.drawCentredString(0, 0, "NO. 001") # Placeholder Number
         c.restoreState()
 
@@ -888,7 +888,7 @@ def generate_ticket():
         c.setFillColor(text_color)
         
         # Title
-        c.setFont("Times-Roman-Bold", 24)
+        c.setFont("Times-Bold", 24)
         title = agenda.get('title', 'AGENDA').upper()
         # Wrap title if long? 
         c.drawString(60, height - 50, title)
@@ -899,7 +899,7 @@ def generate_ticket():
         
         # Main Info
         c.setFillColor(text_color)
-        c.setFont("Times-Roman-Bold", 14)
+        c.setFont("Times-Bold", 14)
         member_dict = participant.get('member') or participant.get('guest') or {}
         member_name = member_dict.get('fullName', 'Peserta').upper()
         c.drawString(60, height - 100, member_name)
@@ -910,7 +910,7 @@ def generate_ticket():
 
         # Date Label
         c.setFillColor(secondary_color)
-        c.setFont("Times-Roman-Bold", 10)
+        c.setFont("Times-Bold", 10)
         c.drawRightString(stub_x - 20, height - 50, "DATE")
         c.setFillColor(text_color)
         c.setFont("Times-Roman", 10)
@@ -935,7 +935,7 @@ def generate_ticket():
             c.setFillColor(bg_color)
             c.rect(x, y, 100, 30, fill=1, stroke=0)
             c.setFillColor(white if bg_color == primary_color else text_color)
-            c.setFont("Times-Roman-Bold", 10)
+            c.setFont("Times-Bold", 10)
             c.drawCentredString(x + 50, y + 10, text)
 
         draw_box(25, 60, role.upper(), primary_color)
@@ -948,7 +948,7 @@ def generate_ticket():
         c.translate(stub_x + 10, height/2)
         
         c.setFillColor(text_color)
-        c.setFont("Times-Roman-Bold", 14)
+        c.setFont("Times-Bold", 14)
         c.drawString(0, 40, "ADMIT ONE")
         
         c.setFont("Times-Roman", 10)
