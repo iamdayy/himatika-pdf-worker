@@ -536,6 +536,7 @@ def process_sign_overlay():
                 can.save()
                 packet.seek(0)
                 page.merge_page(PdfReader(packet).pages[0])
+                packet.close()
 
             writer.add_page(page)
 
@@ -554,6 +555,10 @@ def process_sign_overlay():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+    finally:
+        if 'input_pdf_stream' in locals(): input_pdf_stream.close()
+        if 'qr_bytes' in locals(): qr_bytes.close()
+        if 'output_buffer' in locals(): output_buffer.close()
 
 
 # 3. GENERATE ACTIVINESS LETTER (Dengan Return Lokasi Tanda Tangan)
