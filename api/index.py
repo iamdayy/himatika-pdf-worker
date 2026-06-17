@@ -397,12 +397,48 @@ def export_generic_sheet():
                 all_headers.update(flat.keys())
             headers = list(all_headers)
             
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+
         ws.append(headers)
+        
+        # Style headers
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        header_alignment = Alignment(horizontal="center", vertical="center")
+
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+            cell.border = thin_border
         
         for item in complex_data:
             flat = flatten_object(item)
-            row = [flat.get(h, "") for h in headers]
+            row = [str(flat.get(h, "")) if isinstance(flat.get(h, ""), (list, dict)) else flat.get(h, "") for h in headers]
             ws.append(row)
+
+        # Style data cells
+        data_alignment = Alignment(vertical="center", wrap_text=True)
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(headers)):
+            for cell in row:
+                cell.border = thin_border
+                cell.alignment = data_alignment
+
+        # Auto adjust column width
+        for col_num in range(1, len(headers) + 1):
+            col_letter = get_column_letter(col_num)
+            max_length = 0
+            for cell in ws[col_letter]:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            ws.column_dimensions[col_letter].width = min(adjusted_width, 60) # Max width to avoid overly wide columns
 
         excel_file = io.BytesIO()
         wb.save(excel_file)
