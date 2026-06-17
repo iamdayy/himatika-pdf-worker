@@ -276,18 +276,26 @@ def import_generic_sheet():
         if file.filename == '':
             return jsonify({"error": "No selected file"}), 400
 
-        wb = load_workbook(file)
+        wb = load_workbook(file, read_only=True, data_only=True)
         ws = wb.active # Default to first sheet or active one
         
         data = []
         headers = []
         
         # Read headers (Row 1)
-        for cell in ws[1]:
-            headers.append(cell.value)
+        header_row_gen = ws.iter_rows(min_row=1, max_row=1)
+        try:
+            header_row = next(header_row_gen)
+            for cell in header_row:
+                headers.append(cell.value)
+        except StopIteration:
+            pass # Empty sheet
             
         # Read data (Row 2 onwards)
         for row in ws.iter_rows(min_row=2, values_only=True):
+            if all(cell is None for cell in row):
+                continue
+                
             row_data = {}
             for i, cell_value in enumerate(row):
                 if i < len(headers):
