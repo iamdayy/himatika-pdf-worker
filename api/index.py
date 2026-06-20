@@ -1141,10 +1141,35 @@ def generate_ticket():
         # --- CONTENT: MAIN AREA ---
         c.setFillColor(text_color)
         
+        # Logos Coordinates (Calculated early for width constraints)
+        logo_size = 35
+        logo_y = height - 45 - logo_size
+        itsnu_x = stub_x - 30 - (logo_size * 2) - 10
+        hima_x = stub_x - 30 - logo_size
+        
+        # Date String Logic (Calculated early for width constraints)
+        date_info = agenda.get('date') or {}
+        date_start = date_info.get('start') or '2025-01-01'
+        date_end = date_info.get('end') or '2025-01-01'
+        d_start = date_start.split('T')[0]
+        d_end = date_end.split('T')[0]
+        date_str = d_start if d_start == d_end else f"{d_start} to {d_end}"
+        date_str_width = max(stringWidth("DATE", "Helvetica-Bold", 10), stringWidth(date_str, "Helvetica", 10))
+
         # Title
-        c.setFont("Helvetica-Bold", 22)
         title = agenda.get('title', 'AGENDA').upper()
-        # Wrap title if long? 
+        title_font_size = 22
+        max_title_width = itsnu_x - 60 - 10
+        
+        while stringWidth(title, "Helvetica-Bold", title_font_size) > max_title_width and title_font_size > 12:
+            title_font_size -= 1
+            
+        if stringWidth(title, "Helvetica-Bold", title_font_size) > max_title_width:
+            while stringWidth(title + "...", "Helvetica-Bold", title_font_size) > max_title_width and len(title) > 5:
+                title = title[:-1]
+            title += "..."
+            
+        c.setFont("Helvetica-Bold", title_font_size)
         c.drawString(60, height - 55, title)
         
         c.setFont("Helvetica", 10)
@@ -1153,9 +1178,21 @@ def generate_ticket():
         
         # Main Info
         c.setFillColor(text_color)
-        c.setFont("Helvetica-Bold", 14)
         member_dict = participant.get('member') or participant.get('guest') or {}
         member_name = member_dict.get('fullName', 'Peserta').upper()
+        
+        name_font_size = 14
+        max_name_width = (stub_x - 30) - date_str_width - 60 - 20
+        
+        while stringWidth(member_name, "Helvetica-Bold", name_font_size) > max_name_width and name_font_size > 9:
+            name_font_size -= 0.5
+            
+        if stringWidth(member_name, "Helvetica-Bold", name_font_size) > max_name_width:
+            while stringWidth(member_name + "...", "Helvetica-Bold", name_font_size) > max_name_width and len(member_name) > 5:
+                member_name = member_name[:-1]
+            member_name += "..."
+            
+        c.setFont("Helvetica-Bold", name_font_size)
         c.drawString(60, height - 110, member_name)
         
         c.setFont("Helvetica", 10)
@@ -1166,13 +1203,6 @@ def generate_ticket():
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         logo_itsnu_path = os.path.join(base_dir, 'assets', 'img', 'itsnu-logo.png')
         logo_hima_path = os.path.join(base_dir, 'assets', 'img', 'logo.png')
-        
-        logo_size = 35
-        logo_y = height - 45 - logo_size
-        
-        # Align logos to the right, closer to stub line
-        itsnu_x = stub_x - 30 - (logo_size * 2) - 10
-        hima_x = stub_x - 30 - logo_size
         
         if os.path.exists(logo_itsnu_path):
             c.drawImage(ImageReader(logo_itsnu_path), itsnu_x, logo_y, width=logo_size, height=logo_size, mask='auto', preserveAspectRatio=True)
@@ -1185,14 +1215,6 @@ def generate_ticket():
         c.drawRightString(stub_x - 30, height - 105, "DATE")
         c.setFillColor(text_color)
         c.setFont("Helvetica", 10)
-        date_info = agenda.get('date') or {}
-        date_start = date_info.get('start') or '2025-01-01'
-        date_end = date_info.get('end') or '2025-01-01'
-        
-        # Clean up date string if it has T
-        d_start = date_start.split('T')[0]
-        d_end = date_end.split('T')[0]
-        date_str = d_start if d_start == d_end else f"{d_start} to {d_end}"
         c.drawRightString(stub_x - 30, height - 120, date_str)
 
         # Bottom Boxes (Price/Type)
