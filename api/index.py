@@ -577,6 +577,10 @@ def generate_activiness_letter():
         if not all([member_data, point_data, chairman_data, secretary_data, doc_number, period]):
             return jsonify({"error": "Incomplete data"}), 400
 
+        # Strict validation for NIM
+        if not member_data.get('NIM') or str(member_data.get('NIM')).strip() == '':
+            return jsonify({"error": "NIM tidak valid"}), 400
+
         # Setup PDF
         buffer = io.BytesIO()
         c = canvas.Canvas(buffer, pagesize=A4)
