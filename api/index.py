@@ -14,6 +14,11 @@ import json
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 
+# Media Processing
+import threading
+import subprocess
+import tempfile
+
 # Excel
 from openpyxl import Workbook
 
@@ -30,7 +35,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 # Utils (Asumsi Anda punya file utils/db.py dan utils/storage.py)
 # Jika tidak, Anda bisa menggabungkan kode koneksi DB/R2 di sini langsung.
 from utils.db import get_members_collection
-from utils.storage import upload_bytes_to_r2
+from utils.storage import upload_bytes_to_r2, get_s3_client
 from utils.helpers import flatten_object # Fungsi flatten yang kita buat sebelumnya
 
 app = Flask(__name__)
@@ -171,7 +176,8 @@ def home():
             "pdf_signature": "/api/sign/process",
             "pdf_search_text": "/api/pdf/search-text",
             "activiness_letter": "/api/pdf/activiness-letter",
-            "ticket_generator": "/api/pdf/ticket"
+            "ticket_generator": "/api/pdf/ticket",
+            "video_compress": "/api/media/compress-video"
         }
     })
 # --- ENDPOINTS ---
@@ -1256,7 +1262,9 @@ def generate_ticket():
 
         # QR Code (Middle right)
         qr_payload = {"id": participant.get('_id'), "role": role}
-        qr = qrcode.make(json.dumps(qr_payload))
+        qr = qrcode.QRCode(box_size=2, border=0)
+        qr.add_data(json.dumps(qr_payload))
+        qr.make(fit=True)
         qr_mem = io.BytesIO()
         qr.save(qr_mem, format='PNG')
         qr_mem.seek(0)
@@ -1279,7 +1287,7 @@ def generate_ticket():
         qr = qrcode.QRCode(box_size=2, border=0)
         qr.add_data(json.dumps({"id": participant.get('_id'), "role": role}))
         qr.make(fit=True)
-        img_qr = qr.make_image(fill_color="black", back_color="white")
+        img_qr = qr.make_image(fill_color="black", back_color="transparent")
         
         qr_bytes = io.BytesIO()
         img_qr.save(qr_bytes, format='PNG')
@@ -1660,6 +1668,134 @@ def generate_certificate():
             "success": True,
             "url": public_url
         })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# --- MEDIA PROCESSING ---
+
+def _compress_video_task(file_key: str, video_id: str, callback_url: str) -> None:
+    """
+    Background task: download raw video from R2, compress with FFmpeg, re-upload, notify backend.
+    Uses context manager for temp files to prevent memory leaks.
+    """
+    s3 = get_s3_client()
+    bucket_name = os.environ.get('R2_BUCKET_NAME', '')
+    public_domain = os.environ.get('R2_PUBLIC_DOMAIN', '').rstrip('/')
+
+    input_path = None
+    output_path = None
+
+    try:
+        # 1. Extract extension from file_key if possible
+        ext = os.path.splitext(file_key)[1]
+        if not ext:
+            ext = ".mp4"  # Default fallback
+
+        # Download raw video from R2
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_input:
+            input_path = tmp_input.name
+            s3.download_fileobj(bucket_name, file_key, tmp_input)
+
+        # 2. Compress with FFmpeg: Force output to WebM format
+        output_path = input_path + "_compressed.webm"
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-vf", "scale=-2:720",
+            "-c:v", "libvpx-vp9",
+            "-crf", "30",
+            "-b:v", "0",
+            "-c:a", "libopus",
+            "-b:a", "128k",
+            "-deadline", "realtime",
+            "-cpu-used", "4",
+            output_path
+        ]
+        content_type = "video/webm"
+        base_key, _ = os.path.splitext(file_key)
+        compressed_key = base_key.replace("raw_", "compressed_", 1) + ".webm"
+
+        result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0:
+            print(f"FFmpeg stderr: {result.stderr}")
+            raise RuntimeError(f"FFmpeg failed with code {result.returncode}")
+
+        # 3. Upload compressed video to R2
+        with open(output_path, "rb") as f:
+            compressed_bytes = f.read()
+
+        processed_url = upload_bytes_to_r2(compressed_bytes, content_type, compressed_key)
+
+        # 4. Delete raw video from R2
+        try:
+            s3.delete_object(Bucket=bucket_name, Key=file_key)
+        except Exception as del_err:
+            print(f"Warning: Failed to delete raw video {file_key}: {del_err}")
+
+        # 5. Notify backend via webhook
+        requests.post(
+            callback_url,
+            json={
+                "videoId": video_id,
+                "status": "completed",
+                "processedUrl": processed_url,
+            },
+            timeout=30,
+        )
+        print(f"Video {video_id} compressed successfully: {processed_url}")
+
+    except Exception as e:
+        print(f"Video compression failed for {video_id}: {e}")
+        import traceback
+        traceback.print_exc()
+
+        try:
+            requests.post(
+                callback_url,
+                json={
+                    "videoId": video_id,
+                    "status": "failed",
+                },
+                timeout=30,
+            )
+        except Exception as notify_err:
+            print(f"Failed to notify backend of failure: {notify_err}")
+
+    finally:
+        for path in [input_path, output_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
+@app.route('/api/media/compress-video', methods=['POST'])
+def compress_video():
+    try:
+        body = request.json
+        file_key: str = body.get('fileKey', '')
+        video_id: str = body.get('videoId', '')
+        callback_url: str = body.get('callbackUrl', '')
+
+        if not all([file_key, video_id, callback_url]):
+            return jsonify({"error": "Missing required parameters"}), 400
+
+        thread = threading.Thread(
+            target=_compress_video_task,
+            args=(file_key, video_id, callback_url),
+            daemon=True,
+        )
+        thread.start()
+
+        return jsonify({
+            "success": True,
+            "message": "Video compression started",
+            "videoId": video_id,
+        }), 202
 
     except Exception as e:
         import traceback
