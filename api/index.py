@@ -500,7 +500,7 @@ def process_sign_overlay():
         qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H, border=1, box_size=10)
         qr.add_data(qr_value)
         qr.make(fit=True)
-        qr_pil = qr.make_image(fill_color="black", back_color="transparent")
+        qr_pil = qr.make_image(fill_color="black", back_color="white")
         
         qr_bytes = io.BytesIO()
         qr_pil.save(qr_bytes, format='PNG')
@@ -1265,7 +1265,7 @@ def generate_ticket():
         qr = qrcode.QRCode(box_size=2, border=0)
         qr.add_data(json.dumps(qr_payload))
         qr.make(fit=True)
-        img_qr_main = qr.make_image(fill_color="black", back_color="transparent")
+        img_qr_main = qr.make_image(fill_color="black", back_color="white")
         qr_mem = io.BytesIO()
         img_qr_main.save(qr_mem, format='PNG')
         qr_mem.seek(0)
@@ -1284,17 +1284,7 @@ def generate_ticket():
         c.setFont("Helvetica", 10)
         c.drawString(10, 10, (member_name[:15] + "...") if len(member_name) > 15 else member_name)
         
-        # Small QR for stub
-        qr = qrcode.QRCode(box_size=2, border=0)
-        qr.add_data(json.dumps({"id": participant.get('_id'), "role": role}))
-        qr.make(fit=True)
-        img_qr = qr.make_image(fill_color="black", back_color="transparent")
-        
-        qr_bytes = io.BytesIO()
-        img_qr.save(qr_bytes, format='PNG')
-        qr_bytes.seek(0)
-        
-        c.drawImage(ImageReader(qr_bytes), 10, -60, 50, 50)
+
         
         c.restoreState()
 
@@ -1610,7 +1600,7 @@ def generate_certificate():
                 qr_item = qrcode.QRCode(border=0)
                 qr_item.add_data(content)
                 qr_item.make(fit=True)
-                qr_img_pil = qr_item.make_image(fill_color="black", back_color="transparent")
+                qr_img_pil = qr_item.make_image(fill_color="black", back_color="white")
                 qr_img_bytes = io.BytesIO()
                 qr_img_pil.save(qr_img_bytes, format='PNG')
                 qr_img_bytes.seek(0)
