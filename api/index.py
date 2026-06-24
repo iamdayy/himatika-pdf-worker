@@ -1265,8 +1265,9 @@ def generate_ticket():
         qr = qrcode.QRCode(box_size=2, border=0)
         qr.add_data(json.dumps(qr_payload))
         qr.make(fit=True)
+        img_qr_main = qr.make_image(fill_color="black", back_color="transparent")
         qr_mem = io.BytesIO()
-        qr.save(qr_mem, format='PNG')
+        img_qr_main.save(qr_mem, format='PNG')
         qr_mem.seek(0)
         qr_img = ImageReader(qr_mem)
         
