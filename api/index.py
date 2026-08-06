@@ -36,56 +36,37 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 # Jika tidak, Anda bisa menggabungkan kode koneksi DB/R2 di sini langsung.
 from utils.db import get_members_collection
 from utils.storage import upload_bytes_to_r2, get_s3_client
-from utils.helpers import flatten_object # Fungsi flatten yang kita buat sebelumnya
+from utils.helpers import flatten_object, month_to_roman, draw_wrapped_text, format_date_indo
 
 app = Flask(__name__)
 CORS(app)
 
-# --- HELPER FUNCTIONS ---
+import jwt
 
-def month_to_roman(date_obj):
-    month = date_obj.month
-    roman_numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
-    return roman_numerals[month - 1]
+JWT_SECRET = os.environ.get("JWT_SECRET")
 
-def format_date_indo(date_obj):
-    months = [
-        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
-    ]
-    day = date_obj.day
-    month = months[date_obj.month - 1]
-    year = date_obj.year
-    return f"{day} {month} {year}"
-
-def draw_wrapped_text(canvas_obj, text, x, y, max_width, font_name, font_size, line_height=None):
-    """
-    Menggambar teks yang otomatis turun baris jika melebihi max_width.
-    """
-    if line_height is None:
-        line_height = font_size + 4
-
-    words = text.split(" ")
-    current_line = []
-    current_y = y
+@app.before_request
+def verify_jwt():
+    if request.path == "/" and request.method == "GET":
+        return None
     
-    canvas_obj.setFont(font_name, font_size)
-
-    for word in words:
-        test_line = " ".join(current_line + [word])
-        width = stringWidth(test_line, font_name, font_size)
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Missing or invalid token"}), 401
+    
+    token = auth_header.split(" ")[1]
+    if not JWT_SECRET:
+        print("WARNING: JWT_SECRET is not set. Requests are not authenticated securely.")
+        return None
         
-        if width <= max_width:
-            current_line.append(word)
-        else:
-            canvas_obj.drawString(x, current_y, " ".join(current_line))
-            current_line = [word]
-            current_y -= line_height
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        return jsonify({"error": "Token expired"}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({"error": "Invalid token"}), 401
 
-    if current_line:
-        canvas_obj.drawString(x, current_y, " ".join(current_line))
-    
-    return current_y
+# --- HELPER FUNCTIONS ---
 
 
 def draw_signature_box(c, x, y_top, w, h, p_h,

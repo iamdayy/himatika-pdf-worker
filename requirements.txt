@@ -12,3 +12,4 @@ Pillow==10.2.0
 PyMuPDF==1.23.24
 zxing-cpp==2.2.0
 waitress
+PyJWT>=2.8.0
