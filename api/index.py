@@ -52,7 +52,6 @@ def home():
         "message": "HIMATIKA PDF Worker is running"
     })
 
-# Note: JWT middleware will be added in another branch.
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
