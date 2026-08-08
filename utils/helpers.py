@@ -64,3 +64,58 @@ def draw_wrapped_text(canvas_obj, text, x, y, max_width, font_name, font_size, l
         canvas_obj.drawString(x, current_y, " ".join(current_line))
     
     return current_y # Kembalikan posisi Y terakhir
+
+def draw_signature_box(c, x, y_top, w, h, p_h,
+                        sig_name='', sig_as='', sig_img=None, overlap=False):
+    from reportlab.lib.colors import Color
+    role_h   = h * 0.15   # jabatan di atas
+    name_h   = h * 0.20   # nama di bawah
+    img_h    = h - role_h - name_h   # sisa → gambar
+
+    y_bot    = p_h - (y_top + h)
+    name_y0  = y_bot               # bawah area nama
+    name_y1  = y_bot + name_h      # batas atas nama / batas bawah garis
+    img_y0   = name_y1             # bawah area gambar (tanpa overlap)
+    img_y1   = img_y0 + img_h      # atas area gambar / batas bawah jabatan
+    role_y0  = img_y1
+
+    c.saveState()
+
+    if sig_as:
+        role_fs = max(12, min(14, role_h * 0.60))
+        c.setFont('Helvetica', role_fs)
+        c.setFillColor(Color(0.2, 0.2, 0.2))
+        role_text_y = role_y0 + (role_h - role_fs) / 2
+        c.drawCentredString(x + w / 2, role_text_y, sig_as[:50])
+
+    c.setStrokeColor(Color(0.5, 0.5, 0.5))
+    c.setLineWidth(0.3)
+    c.line(x, img_y1, x + w, img_y1)
+
+    c.setStrokeColor(Color(0.5, 0.5, 0.5))
+    c.setLineWidth(0.5)
+    c.line(x, name_y1, x + w, name_y1)
+
+    if sig_name:
+        name_fs = max(12, min(14, name_h * 0.60))
+        c.setFont('Helvetica-Bold', name_fs)
+        c.setFillColor(Color(0.1, 0.1, 0.1))
+        name_text_y = name_y0 + (name_h - name_fs) / 2
+        c.drawCentredString(x + w / 2, name_text_y, sig_name[:40])
+
+    if sig_img is not None:
+        if overlap:
+            overlap_px  = name_h * 0.50
+            draw_y      = img_y0 - overlap_px
+            draw_h      = img_h + overlap_px
+        else:
+            draw_y  = img_y0
+            draw_h  = img_h
+        side     = min(w * 0.92, draw_h)
+        draw_x   = x + (w - side) / 2
+        center_y = draw_y + (draw_h - side) / 2
+        c.drawImage(sig_img, draw_x, center_y,
+                    width=side, height=side,
+                    mask='auto', preserveAspectRatio=False)
+
+    c.restoreState()

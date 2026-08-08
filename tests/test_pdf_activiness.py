@@ -1,7 +1,7 @@
 import json
 import pytest
 
-def test_activiness_letter_valid(client):
+def test_activiness_letter_valid(client, valid_token):
     payload = {
         "member": {"fullName": "Budi Santoso", "NIM": "12345678", "gender": "L"},
         "point": {
@@ -24,7 +24,7 @@ def test_activiness_letter_valid(client):
     response = client.post(
         '/api/pdf/activiness-letter',
         json=payload,
-        headers={"Authorization": "Bearer fake-token"} # For future auth test
+        headers={"Authorization": f"Bearer {valid_token}"}
     )
     
     assert response.status_code == 200
@@ -35,7 +35,7 @@ def test_activiness_letter_valid(client):
     assert 'filename' in data
     assert 'signatureLocations' in data
     
-def test_activiness_letter_missing_data(client):
+def test_activiness_letter_missing_data(client, valid_token):
     payload = {
         "fullName": "Budi Santoso"
         # Missing NIM and gender
@@ -43,7 +43,8 @@ def test_activiness_letter_missing_data(client):
     
     response = client.post(
         '/api/pdf/activiness-letter',
-        json=payload
+        json=payload,
+        headers={"Authorization": f"Bearer {valid_token}"}
     )
     
     # Check if the server handles missing data gracefully
