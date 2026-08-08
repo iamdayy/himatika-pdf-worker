@@ -20,6 +20,16 @@ def month_to_roman(date_obj):
     roman_numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
     return roman_numerals[month - 1]
 
+def format_date_indo(date_obj):
+    months = [
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ]
+    day = date_obj.day
+    month = months[date_obj.month - 1]
+    year = date_obj.year
+    return f"{day} {month} {year}"
+
 def draw_wrapped_text(canvas_obj, text, x, y, max_width, font_name, font_size, line_height=None):
     """
     Menggambar teks yang otomatis turun baris jika melebihi max_width.
