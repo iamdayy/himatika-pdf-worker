@@ -10,11 +10,12 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
    ```env
    HIMATIKA_MONGODB_URI=...
    DBNAME=...
-   R2_ENDPOINT_URL=...
+   R2_ACCOUNT_ID=...
    R2_ACCESS_KEY_ID=...
    R2_SECRET_ACCESS_KEY=...
    R2_BUCKET_NAME=...
-   R2_Public_Dev_Url=...
+   R2_PUBLIC_DOMAIN=...
+   HIMATIKA_JWT_SECRET=...
    ```
 
 2. **Run Server**:
@@ -25,13 +26,20 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
    # Runs on http://localhost:5000
    ```
 
+3. **Authentication**:
+   All endpoints (except `GET /`) require a valid JWT token in the `Authorization` header:
+   ```
+   Authorization: Bearer <jwt_token>
+   ```
+   The token must contain `{ "service": "himatika-backend" }` and be signed with `HIMATIKA_JWT_SECRET`.
+
 ---
 
 ## Endpoint Tests
 
 ### 1. Generic Excel Export
 
-**Endpoint:** `POST /api/sheet/export`  
+**Endpoint:** `POST /api/sheet/export`
 **Goal:** Verify JSON to Excel conversion.
 
 **Request Payload:**
@@ -47,7 +55,7 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 }
 ```
 
-**Expected Result:**  
+**Expected Result:**
 
 - Status: `200 OK`
 - Header: `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
@@ -55,60 +63,64 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 
 ---
 
-### 2. Member Export
+### 2. Excel Import
 
-**Endpoint:** `POST /api/member/sheet/export`  
-**Goal:** Verify database export of members.
+**Endpoint:** `POST /api/sheet/import`
+**Goal:** Verify Excel file to JSON conversion.
 
-**Request Payload:**
-
-```json
-{
-  "data": ["20200123001", "20200123002"] 
-}
-```
-
-*(Note: Array of NIMs. If empty `[]`, attempts to export all matching query)*
+**Request Payload:** Multipart form-data with an `.xlsx` file.
 
 **Expected Result:**
 
 - Status: `200 OK`
-- Body: Binary Excel file containing member data (NIM, Name, etc).
+- Body: JSON array of parsed rows.
 
 ---
 
-### 3. PDF Overlay (QR Code)
+### 3. Scan QR from PDF
 
-**Endpoint:** `POST /api/pdf/overlay-qr`  
-**Goal:** Verify QR code stamping on existing PDF.
+**Endpoint:** `POST /api/pdf/scan-qr`
+**Goal:** Extract QR code data from a PDF document.
 
 **Request Payload:**
 
 ```json
 {
-  "pdf": "https://pdfobject.com/pdf/sample.pdf",
-  "outputBlobPath": "testing/overlay-result.pdf",
-  "qrValue": "VALID-123",
-  "locations": [
-    { "page": 1, "x": 50, "y": 50, "width": 100, "height": 100 }
-  ]
+  "pdf": "https://example.com/document-with-qr.pdf"
 }
 ```
 
 **Expected Result:**
 
-```json
-{
-  "success": true,
-  "url": "https://.../testing/overlay-result.pdf"
-}
-```
+- Status: `200 OK`
+- Body: JSON with extracted QR value(s).
 
 ---
 
-### 4. Create Activiness Letter
+### 4. Search Text in PDF
 
-**Endpoint:** `POST /api/pdf/activiness-letter`  
+**Endpoint:** `POST /api/pdf/search-text`
+**Goal:** Find text locations within a PDF document.
+
+**Request Payload:**
+
+```json
+{
+  "pdf": "https://example.com/document.pdf",
+  "searchText": "Signature"
+}
+```
+
+**Expected Result:**
+
+- Status: `200 OK`
+- Body: JSON with text location coordinates.
+
+---
+
+### 5. Create Activiness Letter
+
+**Endpoint:** `POST /api/pdf/activiness-letter`
 **Goal:** Generate Surat Keterangan Aktif via ReportLab.
 
 **Request Payload:**
@@ -156,9 +168,9 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 
 ---
 
-### 5. Generate Event Ticket
+### 6. Generate Event Ticket
 
-**Endpoint:** `POST /api/pdf/ticket`  
+**Endpoint:** `POST /api/pdf/ticket`
 **Goal:** Generate event ticket PDF.
 
 **Request Payload:**
@@ -187,10 +199,38 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 
 ---
 
-### 6. Signature Overlay (Auto-Detect)
+### 7. Certificate Preview
+
+**Endpoint:** `POST /api/pdf/certificate-preview`
+**Goal:** Generate a preview of a certificate PDF.
+
+**Request Payload:** Certificate configuration JSON (template items, dimensions, etc.)
+
+**Expected Result:**
+
+- Status: `200 OK`
+- Body: Binary PDF preview.
+
+---
+
+### 8. Generate Certificate
+
+**Endpoint:** `POST /api/pdf/certificate`
+**Goal:** Generate final certificate PDF for a participant.
+
+**Request Payload:** Certificate configuration + participant data.
+
+**Expected Result:**
+
+- Status: `200 OK`
+- Body: JSON with URL to generated certificate.
+
+---
+
+### 9. Signature Overlay (Auto-Detect)
 
 **Endpoint:** `POST /api/sign/process`
-**Goal:** Auto-detect text location and overlay QR code.
+**Goal:** Auto-detect text location and overlay QR code signature.
 
 **Request Payload:**
 
@@ -199,7 +239,9 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
   "pdf": "https://pdfobject.com/pdf/sample.pdf",
   "outputBlobPath": "testing/signature-result.pdf",
   "qrValue": "SIGNED-BY-12345",
-  "searchText": "/12345signature/"
+  "locations": [
+    { "page": 1, "x": 50, "y": 50, "width": 100, "height": 100 }
+  ]
 }
 ```
 
@@ -212,3 +254,73 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
     "data": "https://.../testing/signature-result.pdf"
 }
 ```
+
+---
+
+### 10. Compress Video
+
+**Endpoint:** `POST /api/media/compress-video`
+**Goal:** Compress and transcode video files stored in R2.
+
+**Request Payload:**
+
+```json
+{
+  "fileKey": "videos/raw/video123.mp4",
+  "videoId": "video_db_id",
+  "callbackUrl": "http://localhost:3000/api/storage/webhook-media"
+}
+```
+
+**Expected Result:**
+
+- Status: `200 OK`
+- Body: JSON with compressed video URL and status.
+
+---
+
+### 11. Generate QR Code
+
+**Endpoint:** `POST /api/tools/qr`
+**Goal:** Generate a QR code image.
+
+**Request Payload:**
+
+```json
+{
+  "value": "https://himatika.example.com/verify/123"
+}
+```
+
+**Expected Result:**
+
+- Status: `200 OK`
+- Body: PNG image of QR code.
+
+---
+
+### 12. Compress Image
+
+**Endpoint:** `POST /api/tools/compress-image`
+**Goal:** Compress and resize an uploaded image.
+
+**Request Payload:** Multipart form-data with image file.
+
+**Expected Result:**
+
+- Status: `200 OK`
+- Body: Compressed image binary or URL.
+
+---
+
+### 13. Upload Image
+
+**Endpoint:** `POST /api/tools/upload-image`
+**Goal:** Upload an image to R2 storage.
+
+**Request Payload:** Multipart form-data with image file and destination path.
+
+**Expected Result:**
+
+- Status: `200 OK`
+- Body: JSON with public URL of uploaded image.

@@ -1,3 +1,5 @@
+# ⚠️ DEPRECATED: This Dockerfile is NOT used in production.
+# Production deployment uses Vercel Serverless (see vercel.json).
 FROM python:3.12
 
 WORKDIR /app
