@@ -80,6 +80,8 @@ def process_sign_overlay():
             if p not in locs_by_page: locs_by_page[p] = []
             locs_by_page[p].append(loc)
 
+        packets = []
+
         for i, page in enumerate(reader.pages):
             if i in locs_by_page:
                 p_w = float(page.mediabox.width)
@@ -105,7 +107,7 @@ def process_sign_overlay():
                 can.save()
                 packet.seek(0)
                 page.merge_page(PdfReader(packet).pages[0])
-                packet.close()
+                packets.append(packet)
 
             writer.add_page(page)
 
