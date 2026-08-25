@@ -8,7 +8,7 @@ reportlab==4.0.9
 qrcode[pil]==7.4.2
 requests>=2.32.0
 python-dotenv==1.0.0
-Pillow==10.2.0
+Pillow==10.3.0
 PyMuPDF==1.23.24
 zxing-cpp==2.2.0
 waitress

@@ -4,3 +4,5 @@ __pycache__
 .git
 .github
 .codacy
+.env
+.env.*

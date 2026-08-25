@@ -14,7 +14,9 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import black, white, gray, Color
 from reportlab.pdfbase.pdfmetrics import stringWidth
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
+from PIL import Image
+import zxingcpp
 import threading
 import subprocess
 from flask import Blueprint, request, send_file, jsonify
@@ -129,7 +131,7 @@ def search_text_pdf():
              return jsonify({"error": "Missing pdf url or search text"}), 400
              
         # Download PDF
-        response = requests.get(pdf_url)
+        response = requests.get(pdf_url, timeout=(5, 30))
         if response.status_code != 200:
             return jsonify({"error": "Failed to fetch PDF"}), 400
             
@@ -384,7 +386,7 @@ def generate_activiness_letter():
         note_y = 40
         c.setFont("Times-Italic", 7)
         c.drawString(margin, note_y, f"*Surat ini dibuat dengan menggunakan sistem Informasi Himpunan Mahasiswa Informatika (HIMATIKA) ITSNU Pekalongan")
-        c.drawString(margin, note_y - 8, f"*Untuk verifikasi keaslian surat ini, silakan kunjungi: {os.getenv('PUBLIC_URL')}/verify/scan")
+        c.drawString(margin, note_y - 8, f"*Untuk verifikasi keaslian surat ini, silakan kunjungi: {os.getenv('PUBLIC_URL') or ''}/verify/scan")
         c.drawString(margin, note_y - 16, f"dan ditandatangani secara elektronik. Surat ini sah dan berlaku sebagai bukti keaktifan mahasiswa dalam organisasi.")
 
         # --- SIGNATURE CALCULATIONS ---
@@ -982,7 +984,7 @@ def generate_certificate():
         # Download Template
         # If url is from R2, it is publicly accessible?
         # Assuming upload_bytes_to_r2 returns public url.
-        response = requests.get(template_url)
+        response = requests.get(template_url, timeout=(5, 30))
         if response.status_code != 200:
             return jsonify({"error": "Failed to fetch template"}), 400
         

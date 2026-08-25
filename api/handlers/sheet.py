@@ -14,7 +14,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import black, white, gray, Color
 from reportlab.pdfbase.pdfmetrics import stringWidth
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 import threading
 import subprocess
 from flask import Blueprint, request, send_file, jsonify
