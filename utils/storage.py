@@ -1,8 +1,25 @@
 import os
+import re
 import boto3
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def sanitize_key(key: str) -> str:
+    """Harden an object key before any R2 put/delete.
+
+    Blocks bucket-wide trust escalation via caller-supplied keys:
+    - strips leading slashes / drive-ish prefixes
+    - collapses path traversal (`..`) and duplicate separators
+    - removes whitespace/control characters that break signed URLs
+    """
+    cleaned = str(key).replace("\\", "/")
+    cleaned = re.sub(r"\.{2,}", ".", cleaned)
+    cleaned = re.sub(r"(/|^)\.(?=/|$)", r"\1", cleaned)
+    cleaned = re.sub(r"/{2,}", "/", cleaned)
+    cleaned = re.sub(r"[\s\x00-\x1f]", "_", cleaned)
+    return cleaned.lstrip("/")
 
 def get_s3_client():
     return boto3.client(
@@ -16,7 +33,8 @@ def get_s3_client():
 def upload_bytes_to_r2(file_bytes, content_type, key):
     s3 = get_s3_client()
     bucket_name = os.getenv('R2_BUCKET_NAME')
-    
+    key = sanitize_key(key)
+
     s3.put_object(
         Bucket=bucket_name,
         Key=key,

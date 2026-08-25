@@ -48,7 +48,8 @@ def process_sign_overlay():
             return jsonify({"error": "Missing parameters"}), 400
 
         # Download PDF
-        response = requests.get(pdf_url, timeout=(5, 30))
+        from utils.fetch_guard import safe_fetch
+        response = safe_fetch(pdf_url)
         if response.status_code != 200:
             return jsonify({"error": "Failed to fetch PDF"}), 400
         

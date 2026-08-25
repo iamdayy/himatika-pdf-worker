@@ -131,7 +131,8 @@ def search_text_pdf():
              return jsonify({"error": "Missing pdf url or search text"}), 400
              
         # Download PDF
-        response = requests.get(pdf_url, timeout=(5, 30))
+        from utils.fetch_guard import safe_fetch
+        response = safe_fetch(pdf_url)
         if response.status_code != 200:
             return jsonify({"error": "Failed to fetch PDF"}), 400
             
@@ -866,10 +867,14 @@ def generate_ticket():
                     except Exception as e:
                         print(f"Failed to load sponsor logo: {e}")
 
-        # QR Code (Middle right)
-        qr_payload = {"id": participant.get('_id'), "role": role}
+        # QR Code (Middle right). Prefer the server-signed payload
+        # (`qr_data`) when the caller provides one; fall back to the legacy
+        # JSON shape for older callers.
+        qr_payload = participant.get('_id') and payload.get('qr_data')
+        if not qr_payload:
+            qr_payload = json.dumps({"id": participant.get('_id'), "role": role})
         qr = qrcode.QRCode(box_size=2, border=0)
-        qr.add_data(json.dumps(qr_payload))
+        qr.add_data(qr_payload)
         qr.make(fit=True)
         img_qr_main = qr.make_image(fill_color="black", back_color="white")
         qr_mem = io.BytesIO()
@@ -984,7 +989,7 @@ def generate_certificate():
         # Download Template
         # If url is from R2, it is publicly accessible?
         # Assuming upload_bytes_to_r2 returns public url.
-        response = requests.get(template_url, timeout=(5, 30))
+        response = safe_fetch(template_url)
         if response.status_code != 200:
             return jsonify({"error": "Failed to fetch template"}), 400
         
