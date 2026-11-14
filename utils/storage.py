@@ -42,4 +42,5 @@ def upload_bytes_to_r2(file_bytes, content_type, key):
         ContentType=content_type
     )
     
-    return f"{os.getenv('R2_PUBLIC_DOMAIN')}/{key}"
+    domain = (os.getenv('R2_PUBLIC_DOMAIN') or '').rstrip('/')
+    return f"{domain}/{key}"

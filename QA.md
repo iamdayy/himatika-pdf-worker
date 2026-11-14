@@ -82,7 +82,9 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 **Endpoint:** `POST /api/pdf/scan-qr`
 **Goal:** Extract QR code data from a PDF document.
 
-**Request Payload:**
+**Request Payload (2 modes):**
+
+Multipart form-data with `.pdf` file in field `file`, OR JSON with URL:
 
 ```json
 {
@@ -93,7 +95,7 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 **Expected Result:**
 
 - Status: `200 OK`
-- Body: JSON with extracted QR value(s).
+- Body: JSON with extracted QR value(s): `{"status":"found","data":"..."}` or `{"status":"not_found"}`.
 
 ---
 
@@ -107,9 +109,11 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 ```json
 {
   "pdf": "https://example.com/document.pdf",
-  "searchText": "Signature"
+  "text": "Signature"
 }
 ```
+
+Field `searchText` juga diterima sebagai alias.
 
 **Expected Result:**
 
@@ -122,6 +126,10 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 
 **Endpoint:** `POST /api/pdf/activiness-letter`
 **Goal:** Generate Surat Keterangan Aktif via ReportLab.
+
+**Payload schema saat ini:** `member`, `point`, `chairman`, `secretary`, `docNumber`, `period`, `config` (lihat contoh di bawah).
+
+**Skema lama (legacy) tetap didukung:** `user.member` → `member`, `organizer.dailyManagement[0]` → `chairman`, `organizer.dailyManagement[1]` → `secretary`.
 
 **Request Payload:**
 
@@ -251,7 +259,8 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 {
     "statusCode": 200,
     "statusMessage": "Sign processed successfully",
-    "data": "https://.../testing/signature-result.pdf"
+    "data": "https://.../testing/signature-result.pdf",
+    "success": true
 }
 ```
 
@@ -261,6 +270,21 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 
 **Endpoint:** `POST /api/media/compress-video`
 **Goal:** Compress and transcode video files stored in R2.
+
+**Status:** `503 Service Unavailable` on single-Vercel deployment.
+
+**Reason:** ffmpeg is not installed in the Vercel Serverless Python runtime, and background threads are frozen after the HTTP response. The endpoint intentionally returns 503 instead of a fake 202.
+
+**To enable video compression (keep one Vercel):**
+
+Call an **external transcoding API via HTTP** from this endpoint instead of ffmpeg, e.g.:
+- Cloudflare Stream direct upload
+- Mux
+- AWS Elemental MediaConvert
+
+Replace the 503 block in `api/handlers/media.py` with an HTTP call to your transcoding provider, then `POST` the result to `callbackUrl`.
+
+**Alternative:** Deploy a separate persistent worker (Railway/Fly/VPS) with this same Docker image (ffmpeg included) and target it via QStash — see `DEPLOY.md`.
 
 **Request Payload:**
 
@@ -274,8 +298,8 @@ This document outlines the testing procedures for the **Himatika PDF Worker** se
 
 **Expected Result:**
 
-- Status: `200 OK`
-- Body: JSON with compressed video URL and status.
+- Status: `503` (single Vercel)
+- Body: error message explaining ffmpeg is unavailable.
 
 ---
 

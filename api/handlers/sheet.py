@@ -159,7 +159,13 @@ def import_generic_sheet():
         if file.filename == '':
             return jsonify({"error": "No selected file"}), 400
 
-        wb = load_workbook(file, read_only=True, data_only=True)
+        if not file.filename.lower().endswith('.xlsx'):
+            return jsonify({"error": "File must be .xlsx"}), 400
+
+        try:
+            wb = load_workbook(file, read_only=True, data_only=True)
+        except Exception as parse_err:
+            return jsonify({"error": f"Invalid or corrupted xlsx file: {parse_err}"}), 400
         ws = wb.active # Default to first sheet or active one
         
         data = []
@@ -215,14 +221,24 @@ def import_generic_sheet():
 @bp.route('/api/sheet/export', methods=['POST'])
 def export_generic_sheet():
     try:
+        import re
         body = request.json
         complex_data = body.get('data', [])
         title = body.get('title', 'Export')
         headers_input = body.get('headers', None)
 
+        if not isinstance(complex_data, list):
+            return jsonify({"error": "data must be a list"}), 400
+        for i, item in enumerate(complex_data):
+            if not isinstance(item, dict):
+                return jsonify({"error": f"item {i} is not an object"}), 400
+
+        # sanitize title for openpyxl: remove [ ] : * ? / \
+        safe_title = re.sub(r'[\\/*?:\[\]]', '-', str(title))[:30] or 'Export'
+
         wb = Workbook()
         ws = wb.active
-        ws.title = title[:30] # Excel sheet limit
+        ws.title = safe_title
 
         if not complex_data:
             return jsonify({"message": "No data"}), 400
@@ -232,7 +248,7 @@ def export_generic_sheet():
         else:
             all_headers = set()
             for item in complex_data:
-                flat = flatten_object(item)
+                flat = flatten_object(item, include_id=True)
                 all_headers.update(flat.keys())
             headers = list(all_headers)
             
@@ -255,7 +271,7 @@ def export_generic_sheet():
             cell.border = thin_border
         
         for item in complex_data:
-            flat = flatten_object(item)
+            flat = flatten_object(item, include_id=True)
             row = [str(flat.get(h, "")) if isinstance(flat.get(h, ""), (list, dict)) else flat.get(h, "") for h in headers]
             ws.append(row)
 
@@ -287,7 +303,7 @@ def export_generic_sheet():
             excel_file,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
-            download_name=f"{title}.xlsx"
+            download_name=f"{safe_title}.xlsx"
         )
     except Exception as e:
         return jsonify({"error": str(e)}), 500

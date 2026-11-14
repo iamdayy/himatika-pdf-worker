@@ -10,7 +10,7 @@ def app():
     flask_app.config.update({
         "TESTING": True,
     })
-    os.environ['JWT_SECRET'] = 'test-secret'
+    os.environ['HIMATIKA_JWT_SECRET'] = 'test-secret'
     
     # Mock R2 upload globally
     with patch('api.handlers.pdf.upload_bytes_to_r2', return_value='https://mocked-r2-url.com/file.pdf'):

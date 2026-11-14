@@ -23,6 +23,7 @@ from flask import Blueprint, request, send_file, jsonify
 from utils.db import get_members_collection
 from utils.storage import upload_bytes_to_r2, get_s3_client
 from utils.helpers import flatten_object
+from utils.fetch_guard import safe_fetch
 
 # We will need the helper functions here or in utils/helpers.py
 # For now, let's just dump them if needed, or better, we moved them to utils/helpers.py in another branch, but we are on main branch.
@@ -37,78 +38,94 @@ from utils.helpers import month_to_roman, format_date_indo, draw_wrapped_text, d
 @bp.route('/api/pdf/scan-qr', methods=['POST'])
 def scan_qr():
     try:
-        # Check if file is present
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file uploaded'}), 400
-        
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-
-        # Save to temp
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
-            file.save(temp_pdf.name)
-            temp_pdf_path = temp_pdf.name
+        temp_pdf_path = None
+        # Mode 1: multipart file upload
+        if 'file' in request.files:
+            file = request.files['file']
+            if file.filename == '':
+                return jsonify({'error': 'No file selected'}), 400
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
+                file.save(temp_pdf.name)
+                temp_pdf_path = temp_pdf.name
+        # Mode 2: JSON with pdf URL
+        elif request.is_json:
+            body = request.json
+            pdf_url = body.get('pdf')
+            if not pdf_url:
+                return jsonify({'error': 'Missing pdf URL'}), 400
+            response = safe_fetch(pdf_url)
+            if response.status_code != 200:
+                return jsonify({"error": "Failed to fetch PDF"}), 400
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
+                temp_pdf.write(response.content)
+                temp_pdf_path = temp_pdf.name
+        else:
+            return jsonify({'error': 'No file uploaded and no pdf URL provided'}), 400
 
         doc = fitz.open(temp_pdf_path)
         found_data = None
         
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            
-            # Improve resolution (3x zoom)
-            zoom = 3.0
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat)
-            
-            # Convert PyMuPDF Pixmap to PIL Image
-            if pix.n >= 4:
-                mode = "RGBA"
-            elif pix.n == 3:
-                mode = "RGB"
-            else:
-                mode = "L"
-            
-            img_pil = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
-
-            # Detect attempts with zxing-cpp using Pillow Images
-            attempts = [img_pil]
-            
-            # 2. Grayscale
-            if mode != 'L':
-                img_gray = img_pil.convert('L')
-                attempts.append(img_gray)
-            else:
-                img_gray = img_pil
-            
-            # 3. Binary Threshold (Simulation of cv2.threshold)
-            # Threshold = 128
-            img_binary = img_gray.point(lambda p: 255 if p > 128 else 0, mode='1')
-            attempts.append(img_binary)
-
-            # 4. Darker Threshold
-            img_binary_dark = img_gray.point(lambda p: 255 if p > 100 else 0, mode='1')
-            attempts.append(img_binary_dark)
-            
-            for img_check in attempts:
-                try:
-                    results = zxingcpp.read_barcodes(img_check)
-                    if results:
-                        for result in results:
-                            if result.format == zxingcpp.BarcodeFormat.QRCode:
-                                found_data = result.text
-                                break
-                    if found_data:
-                        break
-                except Exception as e:
-                    # Continue if decoding fails for one variant
-                    continue
-            
-            if found_data:
-                break
+        try:
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
                 
-        doc.close()
-        os.remove(temp_pdf_path)
+                # Improve resolution (3x zoom)
+                zoom = 3.0
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert PyMuPDF Pixmap to PIL Image
+                if pix.n >= 4:
+                    mode = "RGBA"
+                elif pix.n == 3:
+                    mode = "RGB"
+                else:
+                    mode = "L"
+                
+                img_pil = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+
+                # Detect attempts with zxing-cpp using Pillow Images
+                attempts = [img_pil]
+                
+                # 2. Grayscale
+                if mode != 'L':
+                    img_gray = img_pil.convert('L')
+                    attempts.append(img_gray)
+                else:
+                    img_gray = img_pil
+                
+                # 3. Binary Threshold (Simulation of cv2.threshold)
+                # Threshold = 128
+                img_binary = img_gray.point(lambda p: 255 if p > 128 else 0, mode='1')
+                attempts.append(img_binary)
+
+                # 4. Darker Threshold
+                img_binary_dark = img_gray.point(lambda p: 255 if p > 100 else 0, mode='1')
+                attempts.append(img_binary_dark)
+                
+                for img_check in attempts:
+                    try:
+                        results = zxingcpp.read_barcodes(img_check)
+                        if results:
+                            for result in results:
+                                if result.format == zxingcpp.BarcodeFormat.QRCode:
+                                    found_data = result.text
+                                    break
+                        if found_data:
+                            break
+                    except Exception as e:
+                        # Continue if decoding fails for one variant
+                        continue
+                
+                if found_data:
+                    break
+        finally:
+            doc.close()
+            if temp_pdf_path:
+                try:
+                    os.remove(temp_pdf_path)
+                except OSError:
+                    pass
 
         if found_data:
              return jsonify({'status': 'found', 'data': found_data})
@@ -125,13 +142,12 @@ def search_text_pdf():
     try:
         body = request.json
         pdf_url = body.get('pdf')
-        search_text = body.get('text')
+        search_text = body.get('text') or body.get('searchText')
         
         if not pdf_url or not search_text:
              return jsonify({"error": "Missing pdf url or search text"}), 400
              
         # Download PDF
-        from utils.fetch_guard import safe_fetch
         response = safe_fetch(pdf_url)
         if response.status_code != 200:
             return jsonify({"error": "Failed to fetch PDF"}), 400
@@ -177,6 +193,21 @@ def search_text_pdf():
 def generate_activiness_letter():
     try:
         body = request.json
+        # ---- support legacy schema (QA.md / backend) ----
+        # Legacy: user.member, organizer.dailyManagement[], point.activities, point.point
+        if 'user' in body and 'member' not in body:
+            body['member'] = body['user'].get('member') or body['user']
+        if 'organizer' in body and ('chairman' not in body or 'secretary' not in body):
+            dm = body['organizer'].get('dailyManagement', [])
+            if len(dm) >= 1 and 'chairman' not in body:
+                body['chairman'] = dm[0].get('member') or dm[0]
+            if len(dm) >= 2 and 'secretary' not in body:
+                body['secretary'] = dm[1].get('member') or dm[1]
+        if 'point' in body and 'point' in body['point'] and 'point' not in body:
+            # already point_data = body.get('point'), but ensure total point present
+            pass
+        # -------------------------------------------------
+        
         member_data = body.get('member')
         point_data = body.get('point')
         chairman_data = body.get('chairman')
@@ -870,7 +901,7 @@ def generate_ticket():
         # QR Code (Middle right). Prefer the server-signed payload
         # (`qr_data`) when the caller provides one; fall back to the legacy
         # JSON shape for older callers.
-        qr_payload = participant.get('_id') and payload.get('qr_data')
+        qr_payload = body.get('qr_data') or (participant.get('_id') and json.dumps({"id": participant.get('_id'), "role": role}))
         if not qr_payload:
             qr_payload = json.dumps({"id": participant.get('_id'), "role": role})
         qr = qrcode.QRCode(box_size=2, border=0)
@@ -930,35 +961,38 @@ def certificate_preview():
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
             file.save(temp_pdf.name)
             temp_pdf_path = temp_pdf.name
-        
-        doc = fitz.open(temp_pdf_path)
-        page = doc.load_page(0) # First page only
-        
-        # Capture dimensions before closing doc
-        width = page.rect.width
-        height = page.rect.height
-        
-        pix = page.get_pixmap(dpi=150) # Moderate quality for preview
-        
-        img_bytes = io.BytesIO(pix.tobytes("png"))
-        
-        doc.close()
-        # os.remove(temp_pdf_path) # Keep for upload
-        
-        # Upload preview to R2
-        filename = f"preview_{datetime.datetime.now().timestamp()}.png"
-        r2_key = f"certificates/previews/{filename}"
-        public_url = upload_bytes_to_r2(img_bytes.getvalue(), "image/png", r2_key)
 
-        # Upload PDF Template to R2
-        with open(temp_pdf_path, 'rb') as f:
-            pdf_bytes = f.read()
-        
-        pdf_filename = f"template_{datetime.datetime.now().timestamp()}.pdf"
-        pdf_key = f"certificates/templates/{pdf_filename}"
-        pdf_url = upload_bytes_to_r2(pdf_bytes, "application/pdf", pdf_key)
-        
-        os.remove(temp_pdf_path)
+        try:
+            doc = fitz.open(temp_pdf_path)
+            page = doc.load_page(0) # First page only
+
+            # Capture dimensions before closing doc
+            width = page.rect.width
+            height = page.rect.height
+
+            pix = page.get_pixmap(dpi=150) # Moderate quality for preview
+
+            img_bytes = io.BytesIO(pix.tobytes("png"))
+
+            doc.close()
+
+            # Upload preview to R2
+            filename = f"preview_{datetime.datetime.now().timestamp()}.png"
+            r2_key = f"certificates/previews/{filename}"
+            public_url = upload_bytes_to_r2(img_bytes.getvalue(), "image/png", r2_key)
+
+            # Upload PDF Template to R2
+            with open(temp_pdf_path, 'rb') as f:
+                pdf_bytes = f.read()
+
+            pdf_filename = f"template_{datetime.datetime.now().timestamp()}.pdf"
+            pdf_key = f"certificates/templates/{pdf_filename}"
+            pdf_url = upload_bytes_to_r2(pdf_bytes, "application/pdf", pdf_key)
+        finally:
+            try:
+                os.remove(temp_pdf_path)
+            except OSError:
+                pass
 
         return jsonify({
             "success": True,
@@ -994,10 +1028,10 @@ def generate_certificate():
             return jsonify({"error": "Failed to fetch template"}), 400
         
         input_pdf_stream = io.BytesIO(response.content)
-        reader = PdfReader(input_pdf_stream)
-        writer = PdfWriter()
-        
-        page = reader.pages[0]
+        # Clone into writer first: pypdf>=7 forbids merge_page on unattached pages
+        writer = PdfWriter(clone_from=input_pdf_stream)
+
+        page = writer.pages[0]
         p_w = float(page.mediabox.width)
         p_h = float(page.mediabox.height)
         
@@ -1124,7 +1158,6 @@ def generate_certificate():
         packet.seek(0)
         
         page.merge_page(PdfReader(packet).pages[0])
-        writer.add_page(page)
         
         out_buffer = io.BytesIO()
         writer.write(out_buffer)

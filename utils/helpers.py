@@ -1,18 +1,21 @@
-def flatten_object(obj, prefix=""):
+def flatten_object(obj, prefix="", include_id=False):
     result = {}
     key_not_allow = ["_id", "id", "__v", "createdAt", "updatedAt"]
-    
+
+    if not isinstance(obj, dict):
+        raise TypeError(f"flatten_object expects dict, got {type(obj).__name__}")
+
     for key, value in obj.items():
-        if key in key_not_allow:
+        if key in key_not_allow and not include_id:
             continue
-            
+
         if isinstance(value, dict) and value is not None:
             # Rekursif flatten
-            flat_child = flatten_object(value)
+            flat_child = flatten_object(value, include_id=include_id)
             result.update(flat_child)
         else:
             result[key] = value
-            
+
     return result
 
 def month_to_roman(date_obj):

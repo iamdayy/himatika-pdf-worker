@@ -14,8 +14,8 @@ def test_activiness_letter_valid(client, valid_token):
                 "participants": []
             }
         },
-        "chairman": {"name": "Ketua", "nim": "123"},
-        "secretary": {"name": "Sekre", "nim": "456"},
+        "chairman": {"fullName": "Ketua", "NIM": "123"},
+        "secretary": {"fullName": "Sekre", "NIM": "456"},
         "docNumber": "001/HMTK/2026",
         "period": "2025/2026",
         "config": {}

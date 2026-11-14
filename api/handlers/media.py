@@ -15,7 +15,6 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import black, white, gray, Color
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from openpyxl import Workbook
-import threading
 import subprocess
 from flask import Blueprint, request, send_file, jsonify
 from utils.db import get_members_collection
@@ -203,22 +202,31 @@ def _compress_video_task(file_key: str, video_id: str, callback_url: str) -> Non
 
         processed_url = upload_bytes_to_r2(compressed_bytes, content_type, compressed_key)
 
-        # 4. Delete raw video from R2
+        # 4. Notify backend via webhook first
+        callback_ok = False
         try:
-            s3.delete_object(Bucket=bucket_name, Key=file_key)
-        except Exception as del_err:
-            print(f"Warning: Failed to delete raw video {file_key}: {del_err}")
+            resp = requests.post(
+                callback_url,
+                json={
+                    "videoId": video_id,
+                    "status": "completed",
+                    "processedUrl": processed_url,
+                },
+                timeout=30,
+            )
+            callback_ok = resp.status_code < 400
+        except Exception as notify_err:
+            print(f"Callback failed: {notify_err}")
 
-        # 5. Notify backend via webhook
-        requests.post(
-            callback_url,
-            json={
-                "videoId": video_id,
-                "status": "completed",
-                "processedUrl": processed_url,
-            },
-            timeout=30,
-        )
+        # 5. Delete raw video from R2 only after successful callback
+        if callback_ok:
+            try:
+                s3.delete_object(Bucket=bucket_name, Key=file_key)
+            except Exception as del_err:
+                print(f"Warning: Failed to delete raw video {file_key}: {del_err}")
+        else:
+            print(f"Raw video {file_key} retained due to callback failure.")
+
         print(f"Video {video_id} compressed successfully: {processed_url}")
 
     except Exception as e:
@@ -250,27 +258,30 @@ def _compress_video_task(file_key: str, video_id: str, callback_url: str) -> Non
 
 @bp.route('/api/media/compress-video', methods=['POST'])
 def compress_video():
+    """Video compression requires ffmpeg, which is NOT available on Vercel
+    Serverless Python runtime. This endpoint intentionally returns 503 so
+    callers know the feature is unavailable rather than receiving a fake 202.
+
+    To enable video compression you need either:
+      1. An external transcoding API (Mux, Cloudflare Stream, AWS MediaConvert, …)
+         called via HTTP from this endpoint — keeps everything on one Vercel.
+      2. A separate persistent worker (Railway/Fly/VPS) running this same image
+         with ffmpeg installed, targeted by QStash (see DEPLOY.md).
+    """
     try:
         body = request.json
-        file_key: str = body.get('fileKey', '')
-        video_id: str = body.get('videoId', '')
-        callback_url: str = body.get('callbackUrl', '')
+        file_key = body.get('fileKey', '')
+        video_id = body.get('videoId', '')
+        callback_url = body.get('callbackUrl', '')
 
         if not all([file_key, video_id, callback_url]):
             return jsonify({"error": "Missing required parameters"}), 400
 
-        thread = threading.Thread(
-            target=_compress_video_task,
-            args=(file_key, video_id, callback_url),
-            daemon=True,
-        )
-        thread.start()
-
         return jsonify({
-            "success": True,
-            "message": "Video compression started",
+            "success": False,
+            "error": "Video compression unavailable on Vercel serverless: ffmpeg is not installed and background threads are frozen after response. Use an external transcoding API (Mux / Cloudflare Stream / AWS MediaConvert) via HTTP, or deploy a separate worker with ffmpeg (see DEPLOY.md).",
             "videoId": video_id,
-        }), 202
+        }), 503
 
     except Exception as e:
         import traceback

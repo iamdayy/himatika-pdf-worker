@@ -16,5 +16,8 @@ COPY . .
 
 EXPOSE 8080
 ENV PORT=8080
+ENV PYTHONUNBUFFERED=1
 
+# Worker mode: same app, serves /api/media/compress-video/run for QStash.
+# Deploy this image on a persistent host (Railway/Fly/VPS) so ffmpeg + threads survive.
 CMD ["python", "run_waitress.py"]

@@ -72,7 +72,8 @@ def process_sign_overlay():
         qr_img = ImageReader(qr_bytes)
 
         reader = PdfReader(input_pdf_stream)
-        writer = PdfWriter()
+        # Clone into writer first: pypdf>=7 forbids merge_page on unattached pages
+        writer = PdfWriter(clone_from=input_pdf_stream)
 
         # Group Locations
         locs_by_page = {}
@@ -83,11 +84,11 @@ def process_sign_overlay():
 
         packets = []
 
-        for i, page in enumerate(reader.pages):
+        for i, page in enumerate(writer.pages):
             if i in locs_by_page:
                 p_w = float(page.mediabox.width)
                 p_h = float(page.mediabox.height)
-                
+
                 packet = io.BytesIO()
                 can = canvas.Canvas(packet, pagesize=(p_w, p_h))
 
@@ -110,8 +111,6 @@ def process_sign_overlay():
                 page.merge_page(PdfReader(packet).pages[0])
                 packets.append(packet)
 
-            writer.add_page(page)
-
         output_buffer = io.BytesIO()
         writer.write(output_buffer)
         output_buffer.seek(0)
@@ -119,8 +118,10 @@ def process_sign_overlay():
         public_url = upload_bytes_to_r2(output_buffer.getvalue(), "application/pdf", output_path)
 
         return jsonify({
-            "success": True, 
-            "data": public_url
+            "statusCode": 200,
+            "statusMessage": "Sign processed successfully",
+            "data": public_url,
+            "success": True
         })
 
     except Exception as e:
