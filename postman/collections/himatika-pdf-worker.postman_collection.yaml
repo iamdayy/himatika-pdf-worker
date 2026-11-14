@@ -1,0 +1,568 @@
+info:
+  name: HIMATIKA PDF Worker
+  description: |
+    Kontrak semua endpoint HIMATIKA PDF Worker (Vercel serverless).
+
+    Semua endpoint memerlukan header `Authorization: Bearer <jwt_token>` kecuali
+    `GET /` dan `GET /healthz`. Token harus diklaim `{"service": "himatika-backend"`
+    dan ditandatangani dengan `HIMATIKA_JWT_SECRET` yang sama dengan backend.
+
+    Sebelum menjalankan: isi variabel environment `baseUrl` dan `jwtSecret`.
+    Variabel `jwtToken` di-generate otomatis oleh pre-request script koleksi.
+  version: "1.0.0"
+variable:
+  - id: baseUrl
+    type: string
+    value: http://localhost:5000
+    description: Base URL worker (localhost atau Vercel deployment)
+  - id: jwtSecret
+    type: any
+    value: ""
+    description: HIMATIKA_JWT_SECRET — sama persis dengan jwtSecret backend
+  - id: jwtToken
+    type: any
+    value: ""
+    description: Di-generate otomatis pre-request; jangan diisi manual
+  - id: docNumber
+    type: string
+    value: "001/HMTK/2026"
+  - id: nim
+    type: string
+    value: "12345678"
+  - id: pdfUrl
+    type: string
+    value: "https://pdfobject.com/pdf/sample.pdf"
+item:
+  - name: Health
+    item:
+      - name: GET / health
+        request:
+          method: GET
+          url: "{{baseUrl}}/"
+        event:
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              pm.test("Body has status success", function () {
+                const json = pm.response.json();
+                pm.expect(json.status).to.eql("success");
+              });
+      - name: GET /healthz deep check
+        request:
+          method: GET
+          url: "{{baseUrl}}/healthz"
+        event:
+          - listen: test
+            script: |
+              pm.test("Status is 200 or 503", function () {
+                pm.expect(pm.response.code).to.be.oneOf([200, 503]);
+              });
+              const json = pm.response.json();
+              pm.test("Body has status field", function () {
+                pm.expect(json).to.have.property("status");
+              });
+              if (json.status === "unhealthy") {
+                console.log("Unhealthy problems:", JSON.stringify(json.problems));
+              });
+  - name: Auth (no token -> 401)
+    item:
+      - name: POST /api/sign/process without JWT -> 401
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/sign/process"
+          header:
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "pdf": "{{pdfUrl}}",
+                "outputBlobPath": "testing/no-auth.pdf",
+                "qrValue": "NOAUTH-TEST"
+              }
+        event:
+          - listen: test
+            script: |
+              pm.test("Status is 401", function () {
+                pm.response.to.have.status(401);
+              });
+              pm.test("Body says Unauthorized", function () {
+                const json = pm.response.json();
+                pm.expect(json.error).to.include("Unauthorized");
+              });
+  - name: PDF
+    item:
+      - name: POST /api/pdf/scan-qr (URL)
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/pdf/scan-qr"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "pdf": "{{pdfUrl}}"
+              }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              const json = pm.response.json();
+              pm.test("Body has status field", function () {
+                pm.expect(json).to.have.property("status");
+              });
+              pm.test("Status found or not_found", function () {
+                pm.expect(json.status).to.be.oneOf(["found", "not_found"]);
+              });
+      - name: POST /api/pdf/search-text
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/pdf/search-text"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "pdf": "{{pdfUrl}}",
+                "text": "Signature"
+              }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              pm.test("Body is array", function () {
+                pm.expect(pm.response.json()).to.be.an("array");
+              });
+      - name: POST /api/pdf/activiness-letter
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/pdf/activiness-letter"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "member": { "fullName": "Anggota Caca", "NIM": "{{nim}}", "class": "TI-3A" },
+                "point": { "semester": "V", "point": 25, "activities": { "agendas": { "committees": 5, "participants": 2 }, "manualPoints": 10, "projects": 1, "aspirations": 0 } },
+                "chairman": { "fullName": "Ketua Budi", "NIM": "111" },
+                "secretary": { "fullName": "Sekretaris Ani", "NIM": "222" },
+                "docNumber": "{{docNumber}}",
+                "period": "2023 - 2024",
+                "config": { "name": "HIMATIKA", "address": "Jl. Karangdowo No. 9", "contact": { "phone": "08123456789", "email": "hima@example.com" } }
+              }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              const json = pm.response.json();
+              pm.test("Body success true", function () {
+                pm.expect(json.success).to.equal(true);
+              });
+              pm.test("Has url", function () {
+                pm.expect(json.url).to.be.a("string").and.not.empty;
+              });
+              pm.test("Has signatureLocations", function () {
+                pm.expect(json.signatureLocations).to.be.an("array");
+              });
+      - name: POST /api/pdf/ticket
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/pdf/ticket"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "role": "participant",
+                "agenda": {
+                  "_id": "agenda123",
+                  "title": "SEMINAR NASIONAL 2024",
+                  "at": "Auditorium Kampus",
+                  "date": { "start": "2024-05-20T08:00:00Z" },
+                  "photos": [{ "image": "https://via.placeholder.com/800" }]
+                },
+                "participant": { "_id": "p123", "member": { "fullName": "John Doe" } }
+              }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              pm.test("Content-Type is PDF", function () {
+                pm.expect(pm.response.headers.get("Content-Type")).to.include("application/pdf");
+              });
+      - name: POST /api/pdf/certificate-preview (file)
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/pdf/certificate-preview"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+          body:
+            mode: formdata
+            formdata:
+              - { key: file, type: file, src: "postman/fixtures/sample.pdf" }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              const json = pm.response.json();
+              pm.test("Has url and pdfUrl", function () {
+                pm.expect(json.url).to.be.a("string");
+                pm.expect(json.pdfUrl).to.be.a("string");
+              });
+      - name: POST /api/pdf/certificate
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/pdf/certificate"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "templateUrl": "{{pdfUrl}}",
+                "items": [
+                  { "type": "name", "x": 100, "y": 100, "width": 300, "height": 40, "fontSize": 16, "fontFamily": "Times-Roman", "align": "center", "color": "#000000" }
+                ],
+                "data": { "name": "Postman Test User" }
+              }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              const json = pm.response.json();
+              pm.test("Body success true", function () {
+                pm.expect(json.success).to.equal(true);
+              });
+              pm.test("Has url", function () {
+                pm.expect(json.url).to.be.a("string").and.not.empty;
+              });
+  - name: Sign
+    item:
+      - name: POST /api/sign/process
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/sign/process"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "pdf": "{{pdfUrl}}",
+                "outputBlobPath": "testing/postman-signature-result.pdf",
+                "qrValue": "SIGNED-BY-POSTMAN",
+                "locations": [
+                  { "page": 1, "x": 50, "y": 50, "width": 100, "height": 100 }
+                ]
+              }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              const json = pm.response.json();
+              pm.test("Has statusCode/statusMessage/data", function () {
+                pm.expect(json.statusCode).to.eql(200);
+                pm.expect(json.statusMessage).to.include("success");
+                pm.expect(json.data).to.be.a("string").and.not.empty;
+              });
+  - name: Sheet
+    item:
+      - name: POST /api/sheet/export
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/sheet/export"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "title": "Postman Export",
+                "headers": ["Name", "Role", "Active"],
+                "data": [
+                  { "Name": "Alice", "Role": "Admin", "Active": "Yes" },
+                  { "Name": "Bob", "Role": "User", "Active": "No" }
+                ]
+              }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              pm.test("Content-Type is Excel", function () {
+                pm.expect(pm.response.headers.get("Content-Type")).to.include("spreadsheetml");
+              });
+      - name: POST /api/sheet/import (file)
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/sheet/import"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+          body:
+            mode: formdata
+            formdata:
+              - { key: file, type: file, src: "postman/fixtures/sample.xlsx" }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200 or 400", function () {
+                pm.expect(pm.response.code).to.be.oneOf([200, 400]);
+              });
+  - name: Tools
+    item:
+      - name: POST /api/tools/qr
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/tools/qr"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              { "value": "https://himatika.example.com/verify/postman" }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              const json = pm.response.json();
+              pm.test("Has dataUrl", function () {
+                pm.expect(json.dataUrl).to.startWith("data:image/png;base64,");
+              });
+      - name: POST /api/tools/compress-image (file)
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/tools/compress-image"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+          body:
+            mode: formdata
+            formdata:
+              - { key: file, type: file, src: "postman/fixtures/sample.png" }
+              - { key: quality, type: text, value: "80" }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+      - name: POST /api/tools/upload-image (file)
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/tools/upload-image"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+          body:
+            mode: formdata
+            formdata:
+              - { key: file, type: file, src: "postman/fixtures/sample.png" }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 200", function () {
+                pm.response.to.have.status(200);
+              });
+              const json = pm.response.json();
+              pm.test("Has url", function () {
+                pm.expect(json.url).to.be.a("string").and.not.empty;
+              });
+  - name: Media
+    item:
+      - name: POST /api/media/compress-video -> 503 on single Vercel
+        request:
+          method: POST
+          url: "{{baseUrl}}/api/media/compress-video"
+          header:
+            - { key: Authorization, value: "Bearer {{jwtToken}}" }
+            - { key: Content-Type, value: application/json }
+          body:
+            mode: raw
+            raw: |-
+              {
+                "fileKey": "videos/raw/postman.mp4",
+                "videoId": "postman-video-id",
+                "callbackUrl": "https://postman-echo.com/post"
+              }
+        event:
+          - listen: prerequest
+            script: |
+              if (!pm.collectionVariables.get("jwtToken") && pm.variables.get("jwtSecret")) {
+                const header = { alg: "HS256", typ: "JWT" };
+                const payload = { service: "himatika-backend" };
+                const secret = pm.variables.get("jwtSecret");
+                const b64u = (o) => btoa(JSON.stringify(o)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                const si = b64u(header) + "." + b64u(payload);
+                const sig = CryptoJS.HmacSHA256(si, secret).toString(CryptoJS.enc.Base64).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+                pm.collectionVariables.set("jwtToken", si + "." + sig);
+              }
+          - listen: test
+            script: |
+              pm.test("Status is 503 (ffmpeg unavailable on Vercel)", function () {
+                pm.response.to.have.status(503);
+              });
+              const json = pm.response.json();
+              pm.test("Body explains unavailability", function () {
+                pm.expect(json.error).to.include("ffmpeg");
+              });
